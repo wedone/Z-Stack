@@ -317,6 +317,55 @@ SimpleDescriptionFormat_t zclSampleSw_SimpleDesc =
 };
 
 /*********************************************************************
+ * 4路继电器端点 (EP 1-4) — genOnOff server 簇
+ * 对应 alab.switch 的 l1/l2/l3/l4
+ */
+
+// 4路继电器开关状态 (FALSE=OFF, TRUE=ON)
+uint8 zclSampleSw_RelayState[SAMPLESW_NUM_RELAYS] = {FALSE, FALSE, FALSE, FALSE};
+
+// genOnOff input cluster list (4个端点共用)
+const cId_t zclSampleSw_RelayInClusterList[] =
+{
+  ZCL_CLUSTER_ID_GEN_ON_OFF,
+};
+
+#define ZCLSAMPLESW_MAX_RELAY_INCLUSTERS  ( sizeof(zclSampleSw_RelayInClusterList) / sizeof(zclSampleSw_RelayInClusterList[0]) )
+
+// 4个端点的 SimpleDescriptor
+SimpleDescriptionFormat_t zclSampleSw_RelaySimpleDesc[SAMPLESW_NUM_RELAYS] =
+{
+  { SAMPLESW_ENDPOINT_RELAY1, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_ON_OFF_LIGHT, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_RELAY_INCLUSTERS, (cId_t *)zclSampleSw_RelayInClusterList, 0, NULL },
+  { SAMPLESW_ENDPOINT_RELAY2, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_ON_OFF_LIGHT, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_RELAY_INCLUSTERS, (cId_t *)zclSampleSw_RelayInClusterList, 0, NULL },
+  { SAMPLESW_ENDPOINT_RELAY3, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_ON_OFF_LIGHT, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_RELAY_INCLUSTERS, (cId_t *)zclSampleSw_RelayInClusterList, 0, NULL },
+  { SAMPLESW_ENDPOINT_RELAY4, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_ON_OFF_LIGHT, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_RELAY_INCLUSTERS, (cId_t *)zclSampleSw_RelayInClusterList, 0, NULL },
+};
+
+// 每个端点的 genOnOff 属性列表
+CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep1[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[0] } },
+};
+CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep2[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[1] } },
+};
+CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[2] } },
+};
+CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[3] } },
+};
+
+CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS = ( sizeof(zclSampleSw_RelayAttrs_ep1) / sizeof(zclSampleSw_RelayAttrs_ep1[0]) );
+
+/*********************************************************************
  * GLOBAL FUNCTIONS
  */
 

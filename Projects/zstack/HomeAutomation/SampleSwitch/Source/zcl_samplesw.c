@@ -97,6 +97,13 @@
 
 #include "zcl_sampleapps_ui.h"
 
+// 4路继电器端点属性数组 (定义在 zcl_samplesw_data.c)
+extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep1[];
+extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep2[];
+extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[];
+extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[];
+extern CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS;
+
 /*********************************************************************
  * MACROS
  */
@@ -273,6 +280,20 @@ void zclSampleSw_Init( byte task_id )
 
   // Register for a test endpoint
   afRegister( &sampleSw_TestEp );
+
+  // 注册4路继电器端点 (EP 1-4, 对应 alab.switch l1-l4)
+  {
+    uint8 ep;
+    for (ep = 0; ep < SAMPLESW_NUM_RELAYS; ep++)
+    {
+      bdb_RegisterSimpleDescriptor(&zclSampleSw_RelaySimpleDesc[ep]);
+      zclGeneral_RegisterCmdCallbacks(zclSampleSw_RelaySimpleDesc[ep].EndPoint, &zclSampleSw_CmdCallbacks);
+    }
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY1, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep1);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY2, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep2);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY3, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep3);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY4, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep4);
+  }
   
 #ifdef ZCL_DIAGNOSTIC
   // Register the application's callback function to read/write attribute data.
