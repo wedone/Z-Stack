@@ -55,7 +55,7 @@ extern "C"
 /*********************************************************************
  * CONSTANTS
  */
-#define SAMPLESW_ENDPOINT               8
+#define SAMPLESW_ENDPOINT               9
 
 // 4路继电器端点 (EP 1-4, 对应 alab.switch 的 l1-l4)
 #define SAMPLESW_ENDPOINT_RELAY1        1
@@ -63,6 +63,13 @@ extern "C"
 #define SAMPLESW_ENDPOINT_RELAY3        3
 #define SAMPLESW_ENDPOINT_RELAY4        4
 #define SAMPLESW_NUM_RELAYS             4
+
+// 4路触摸输入端点 (EP 5-8, 对应 alab.switch 的 in1-in4)
+#define SAMPLESW_ENDPOINT_INPUT1        5
+#define SAMPLESW_ENDPOINT_INPUT2        6
+#define SAMPLESW_ENDPOINT_INPUT3        7
+#define SAMPLESW_ENDPOINT_INPUT4        8
+#define SAMPLESW_NUM_INPUTS             4
 
 #define LIGHT_OFF                       0x00
 #define LIGHT_ON                        0x01
@@ -96,9 +103,13 @@ extern SimpleDescriptionFormat_t zclSampleSw9_SimpleDesc;
 
 extern SimpleDescriptionFormat_t zclSampleSw_RelaySimpleDesc[SAMPLESW_NUM_RELAYS];
 
+extern SimpleDescriptionFormat_t zclSampleSw_InputSimpleDesc[SAMPLESW_NUM_INPUTS];
+
 extern CONST zclAttrRec_t zclSampleSw_Attrs[];
 
 extern uint8 zclSampleSw_RelayState[SAMPLESW_NUM_RELAYS];
+
+extern uint8 zclSampleSw_InputState[SAMPLESW_NUM_INPUTS];
 
 extern uint8  zclSampleSw_OnOff;
 

@@ -104,6 +104,13 @@ extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[];
 extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[];
 extern CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS;
 
+// 4路触摸输入端点属性数组 (定义在 zcl_samplesw_data.c)
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep1[];
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep2[];
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep3[];
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep4[];
+extern CONST uint8 ZCLSAMPLESW_NUM_INPUT_ATTRS;
+
 /*********************************************************************
  * 真实硬件引脚配置 (86四路智能开关)
  * - 继电器: P1_0/P1_2/P1_6/P2_0 (低电平触发)
@@ -324,6 +331,19 @@ void zclSampleSw_Init( byte task_id )
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY2, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep2);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY3, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep3);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY4, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep4);
+  }
+
+  // 注册4路触摸输入端点 (EP 5-8, 对应 alab.switch in1-in4)
+  {
+    uint8 ep;
+    for (ep = 0; ep < SAMPLESW_NUM_INPUTS; ep++)
+    {
+      bdb_RegisterSimpleDescriptor(&zclSampleSw_InputSimpleDesc[ep]);
+    }
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT1, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep1);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT2, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep2);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT3, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep3);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT4, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep4);
   }
   
 #ifdef ZCL_DIAGNOSTIC
@@ -573,6 +593,15 @@ static void zclSampleSw_BasicResetCB( void )
     }
   }
 
+  // 复位触摸输入状态
+  {
+    uint8 i;
+    for (i = 0; i < SAMPLESW_NUM_INPUTS; i++)
+    {
+      zclSampleSw_InputState[i] = 0;
+    }
+  }
+
   // update the display
   UI_UpdateLcd( );
 }
@@ -756,6 +785,10 @@ static void zclSampleSw_PollTouchKeys( void )
     uint8 bit = BV(4 + i);  // P0_4~P0_7
     uint8 lastHigh = (touchKeyLastState & bit) != 0;
     uint8 currLow = (currentState & bit) == 0;
+
+    // 更新触摸输入状态 (0=未触摸, 1=触摸)
+    // 低电平有效: currLow为true表示触摸
+    zclSampleSw_InputState[i] = currLow ? 1 : 0;
 
     if (lastHigh && currLow)
     {
