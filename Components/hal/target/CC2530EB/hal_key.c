@@ -22,7 +22,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED �AS IS� WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED �AS IS� WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -107,23 +107,23 @@
 #define HAL_KEY_CPU_PORT_0_IF P0IF
 #define HAL_KEY_CPU_PORT_2_IF P2IF
 
-/* SW_6 is at P0.1 */
-#define HAL_KEY_SW_6_PORT   P0
-#define HAL_KEY_SW_6_BIT    BV(1)
-#define HAL_KEY_SW_6_SEL    P0SEL
-#define HAL_KEY_SW_6_DIR    P0DIR
+/* SW_6 is at P1.3 (配网/复位按键) */
+#define HAL_KEY_SW_6_PORT   P1
+#define HAL_KEY_SW_6_BIT    BV(3)
+#define HAL_KEY_SW_6_SEL    P1SEL
+#define HAL_KEY_SW_6_DIR    P1DIR
 
 /* edge interrupt */
-#define HAL_KEY_SW_6_EDGEBIT  BV(0)
+#define HAL_KEY_SW_6_EDGEBIT  BV(3)
 #define HAL_KEY_SW_6_EDGE     HAL_KEY_FALLING_EDGE
 
 
 /* SW_6 interrupts */
-#define HAL_KEY_SW_6_IEN      IEN1  /* CPU interrupt mask register */
-#define HAL_KEY_SW_6_IENBIT   BV(5) /* Mask bit for all of Port_0 */
-#define HAL_KEY_SW_6_ICTL     P0IEN /* Port Interrupt Control register */
-#define HAL_KEY_SW_6_ICTLBIT  BV(1) /* P0IEN - P0.1 enable/disable bit */
-#define HAL_KEY_SW_6_PXIFG    P0IFG /* Interrupt flag at source */
+#define HAL_KEY_SW_6_IEN      IEN2  /* CPU interrupt mask register */
+#define HAL_KEY_SW_6_IENBIT   BV(4) /* Mask bit for all of Port_1 */
+#define HAL_KEY_SW_6_ICTL     P1IEN /* Port Interrupt Control register */
+#define HAL_KEY_SW_6_ICTLBIT  BV(3) /* P1IEN - P1.3 enable/disable bit */
+#define HAL_KEY_SW_6_PXIFG    P1IFG /* Interrupt flag at source */
 
 /* Joy stick move at P2.0 */
 #define HAL_KEY_JOY_MOVE_PORT   P2

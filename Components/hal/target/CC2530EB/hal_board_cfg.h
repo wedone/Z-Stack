@@ -104,7 +104,7 @@
 #if defined (HAL_BOARD_CC2530EB_REV17) && !defined (HAL_PA_LNA) && \
     !defined (HAL_PA_LNA_CC2590) && !defined (HAL_PA_LNA_SE2431L) && \
     !defined (HAL_PA_LNA_CC2592)
-  #define HAL_NUM_LEDS            3
+  #define HAL_NUM_LEDS            4
 #elif defined (HAL_BOARD_CC2530EB_REV13) || defined (HAL_PA_LNA) ||  \
       defined (HAL_PA_LNA_CC2590)  || defined (HAL_PA_LNA_CC2592) || \
       defined (HAL_PA_LNA_SE2431L)
@@ -115,35 +115,31 @@
 
 #define HAL_LED_BLINK_DELAY()   st( { volatile uint32 i; for (i=0; i<0x5800; i++) { }; } )
 
-/* 1 - Green */
+/* 1 - 状态灯1 (P0_0, 反逻辑: OFF=高电平=灯亮) */
 #define LED1_BV           BV(0)
-#define LED1_SBIT         P1_0
-#define LED1_DDR          P1DIR
-#define LED1_POLARITY     ACTIVE_HIGH
+#define LED1_SBIT         P0_0
+#define LED1_DDR          P0DIR
+#define LED1_POLARITY     ACTIVE_LOW
 
 #if defined (HAL_BOARD_CC2530EB_REV17)
-  /* 2 - Red */
+  /* 2 - 状态灯2 (P0_1, 反逻辑) */
   #define LED2_BV           BV(1)
-  #define LED2_SBIT         P1_1
-  #define LED2_DDR          P1DIR
-  #define LED2_POLARITY     ACTIVE_HIGH
+  #define LED2_SBIT         P0_1
+  #define LED2_DDR          P0DIR
+  #define LED2_POLARITY     ACTIVE_LOW
 
-  /* 3 - Yellow */
-  #define LED3_BV           BV(4)
-  #define LED3_SBIT         P1_4
-  #define LED3_DDR          P1DIR
-  #define LED3_POLARITY     ACTIVE_HIGH
+  /* 3 - 状态灯3 (P0_2, 反逻辑) */
+  #define LED3_BV           BV(2)
+  #define LED3_SBIT         P0_2
+  #define LED3_DDR          P0DIR
+  #define LED3_POLARITY     ACTIVE_LOW
 
-#ifdef ENABLE_LED4_DISABLE_S1
-  /* 4 - Orange */
-  #define LED4_BV             BV(1)
-  #define LED4_SBIT           P0_1
+  /* 4 - 状态灯4 (P0_3, 反逻辑) */
+  #define LED4_BV             BV(3)
+  #define LED4_SBIT           P0_3
   #define LED4_DDR            P0DIR
-  #define LED4_POLARITY       ACTIVE_HIGH
+  #define LED4_POLARITY       ACTIVE_LOW
   #define LED4_SET_DIR()      do {LED4_DDR |= LED4_BV;} while (0)
-#else
-  #define LED4_SET_DIR()
-#endif
 #endif
 
 /* ------------------------------------------------------------------------------------------------
@@ -154,12 +150,12 @@
 #define ACTIVE_LOW        !
 #define ACTIVE_HIGH       !!    /* double negation forces result to be '1' */
 
-/* S1 */
-#define PUSH1_BV          BV(1)
-#define PUSH1_SBIT        P0_1
+/* S1 - 配网/复位按键 (P1_3, 低电平有效) */
+#define PUSH1_BV          BV(3)
+#define PUSH1_SBIT        P1_3
 
 #if defined (HAL_BOARD_CC2530EB_REV17)
-  #define PUSH1_POLARITY    ACTIVE_HIGH
+  #define PUSH1_POLARITY    ACTIVE_LOW
 #elif defined (HAL_BOARD_CC2530EB_REV13)
   #define PUSH1_POLARITY    ACTIVE_LOW
 #else
