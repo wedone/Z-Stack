@@ -1437,7 +1437,7 @@
                 </option>
                 <option>
                     <name>OGChipConfigPath</name>
-                    <state>$TOOLKIT_DIR$\config\devices\Texas Instruments\CC2530F256.i51</state>
+                    <state>C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\8051\bin\..\config\devices\Texas Instruments\CC25xx\3x\CC2530F256.i51</state>
                 </option>
             </data>
         </settings>
@@ -2136,24 +2136,24 @@
                 </option>
                 <option>
                     <name>AllowExtraOutput</name>
-                    <state>0</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>GenerateExtraOutput</name>
-                    <state>0</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>XExtraOutOverride</name>
-                    <state>0</state>
+                    <state>1</state>
                 </option>
                 <option>
                     <name>ExtraOutputFile</name>
-                    <state>SampleSwitch.sim</state>
+                    <state>SampleSwitch.hex</state>
                 </option>
                 <option>
                     <name>ExtraOutputFormat</name>
                     <version>11</version>
-                    <state>60</state>
+                    <state>23</state>
                 </option>
                 <option>
                     <name>ExtraFormatVariant</name>
