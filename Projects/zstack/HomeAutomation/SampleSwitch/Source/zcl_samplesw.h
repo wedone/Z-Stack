@@ -109,7 +109,7 @@ extern CONST zclAttrRec_t zclSampleSw_Attrs[];
 
 extern uint8 zclSampleSw_RelayState[SAMPLESW_NUM_RELAYS];
 
-extern uint8 zclSampleSw_InputState[SAMPLESW_NUM_INPUTS];
+extern float zclSampleSw_InputState[SAMPLESW_NUM_INPUTS];
 
 extern uint8  zclSampleSw_OnOff;
 

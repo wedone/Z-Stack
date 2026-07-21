@@ -366,9 +366,11 @@ enum
 
 #define UI_LED_DEVICE_STATE_FLASH_TIME 4000
 
-#define UI_LED_DEVICE_STATE       HAL_LED_2
-#define UI_LED_IDENTIFY           HAL_LED_3
-#define UI_LED_NETWORK_OPEN_STATE HAL_LED_4
+// 86四路智能开关适配: UI LED 统一使用 LED1 (P0_0)
+// LED2-4 (P0_1~P0_3) 由继电器状态控制，不参与 UI 闪烁
+#define UI_LED_DEVICE_STATE       HAL_LED_1
+#define UI_LED_IDENTIFY           HAL_LED_1
+#define UI_LED_NETWORK_OPEN_STATE HAL_LED_1
 
 #define NWK_OPEN_FOR_JOINING 0x1
 #define NWK_OPEN_TOUCHLINK_AS_TARGET 0x2
@@ -1913,27 +1915,33 @@ static void uiProcessBindNotification( bdbBindNotificationData_t *data )
  */
 void UI_DeviceStateUpdated(devStates_t NwkState)
 {
-  uint8 LedDutyCycle;
+  uint8 LedDutyCycle = 0;
 
   uiNwkStateShadow = NwkState;
 
   switch (NwkState)
   {
     case DEV_ZB_COORD:
-      LedDutyCycle = UI_LED_COORDINATOR_DUTY_CYCLE;
-      break;
     case DEV_ROUTER:
-      LedDutyCycle = UI_LED_ROUTER_DUTY_CYCLE;
-      break;
     case DEV_END_DEVICE:
-      LedDutyCycle = UI_LED_END_DEVICE_DUTY_CYCLE;
-      break;
-    default:
+      // 86四路智能开关适配: 已入网，停止 LED 闪烁，由继电器状态控制
       LedDutyCycle = 0;
       break;
+    default:
+      // 未入网，LED 闪烁提示需要配网 (50%占空比, 1秒周期)
+      LedDutyCycle = UI_LED_IDENTIFY_DUTY_CYCLE;
+      break;
   }
-  
-  HalLedBlink ( UI_LED_DEVICE_STATE, 0, LedDutyCycle, UI_LED_DEVICE_STATE_FLASH_TIME );
+
+  if (LedDutyCycle > 0)
+  {
+    HalLedBlink ( UI_LED_DEVICE_STATE, 0, LedDutyCycle, 1000 );
+  }
+  else
+  {
+    // 停止闪烁，关闭 LED1 (应用层会立即恢复继电器状态显示)
+    HalLedSet ( UI_LED_DEVICE_STATE, HAL_LED_MODE_OFF );
+  }
 
   UI_UpdateLcd();
 }

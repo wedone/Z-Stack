@@ -417,6 +417,12 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
 
         case ZDO_STATE_CHANGE:
           UI_DeviceStateUpdated((devStates_t)(MSGpkt->hdr.status));
+          // 86四路智能开关适配: 入网后恢复 LED1 的继电器状态显示
+          // (UI_DeviceStateUpdated 会停止 LED1 闪烁并关闭，需要重新同步)
+          if (zclSampleSw_RelayState[0] == LIGHT_ON)
+            HAL_TURN_OFF_LED1();  // 继电器ON -> LED灭 (反逻辑)
+          else
+            HAL_TURN_ON_LED1();   // 继电器OFF -> LED亮 (反逻辑)
           break;
 
 #if defined (OTA_CLIENT) && (OTA_CLIENT == TRUE)
@@ -598,7 +604,7 @@ static void zclSampleSw_BasicResetCB( void )
     uint8 i;
     for (i = 0; i < SAMPLESW_NUM_INPUTS; i++)
     {
-      zclSampleSw_InputState[i] = 0;
+      zclSampleSw_InputState[i] = 0.0f;
     }
   }
 
@@ -642,6 +648,13 @@ static void zclSampleSw_RelayInit( void )
   P0SEL &= ~(TOUCH_KEY_MASK);
   // P0_4~P0_7 设为上拉输入 (P0INP对应位清0=上拉/下拉)
   P0INP &= ~(TOUCH_KEY_MASK);
+
+  // 初始化 LED 状态 (继电器初始为OFF -> LED亮, 反逻辑)
+  // HalLedInit 会关闭所有LED，这里恢复继电器状态对应的LED显示
+  HAL_TURN_ON_LED1();
+  HAL_TURN_ON_LED2();
+  HAL_TURN_ON_LED3();
+  HAL_TURN_ON_LED4();
 }
 
 /*********************************************************************
@@ -786,9 +799,9 @@ static void zclSampleSw_PollTouchKeys( void )
     uint8 lastHigh = (touchKeyLastState & bit) != 0;
     uint8 currLow = (currentState & bit) == 0;
 
-    // 更新触摸输入状态 (0=未触摸, 1=触摸)
+    // 更新触摸输入状态 (0.0=未触摸, 1.0=触摸, float类型)
     // 低电平有效: currLow为true表示触摸
-    zclSampleSw_InputState[i] = currLow ? 1 : 0;
+    zclSampleSw_InputState[i] = currLow ? 1.0f : 0.0f;
 
     if (lastHigh && currLow)
     {

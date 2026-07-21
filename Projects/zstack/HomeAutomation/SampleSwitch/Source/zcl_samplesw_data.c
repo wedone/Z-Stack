@@ -371,8 +371,9 @@ CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS = ( sizeof(zclSampleSw_RelayAttrs_ep1) /
  * 用于上报触摸按键状态 (0=未触摸, 1=触摸)
  */
 
-// 4路触摸输入状态 (0=未触摸, 1=触摸)
-uint8 zclSampleSw_InputState[SAMPLESW_NUM_INPUTS] = {0, 0, 0, 0};
+// 4路触摸输入状态 (float类型: 0.0=未触摸, 1.0=触摸)
+// genAnalogInput.presentValue ZCL标准类型为 single_float (0x39)
+float zclSampleSw_InputState[SAMPLESW_NUM_INPUTS] = {0.0f, 0.0f, 0.0f, 0.0f};
 
 // genAnalogInput input cluster list (4个端点共用)
 const cId_t zclSampleSw_InputInClusterList[] =
@@ -395,22 +396,22 @@ SimpleDescriptionFormat_t zclSampleSw_InputSimpleDesc[SAMPLESW_NUM_INPUTS] =
     ZCLSAMPLESW_MAX_INPUT_INCLUSTERS, (cId_t *)zclSampleSw_InputInClusterList, 0, NULL },
 };
 
-// 每个输入端点的 genAnalogInput 属性列表 (presentValue)
+// 每个输入端点的 genAnalogInput 属性列表 (presentValue, float类型)
 CONST zclAttrRec_t zclSampleSw_InputAttrs_ep1[] =
 {
-  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_UINT8, ACCESS_CONTROL_READ, (void *)&zclSampleSw_InputState[0] } },
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[0] } },
 };
 CONST zclAttrRec_t zclSampleSw_InputAttrs_ep2[] =
 {
-  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_UINT8, ACCESS_CONTROL_READ, (void *)&zclSampleSw_InputState[1] } },
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[1] } },
 };
 CONST zclAttrRec_t zclSampleSw_InputAttrs_ep3[] =
 {
-  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_UINT8, ACCESS_CONTROL_READ, (void *)&zclSampleSw_InputState[2] } },
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[2] } },
 };
 CONST zclAttrRec_t zclSampleSw_InputAttrs_ep4[] =
 {
-  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_UINT8, ACCESS_CONTROL_READ, (void *)&zclSampleSw_InputState[3] } },
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[3] } },
 };
 
 CONST uint8 ZCLSAMPLESW_NUM_INPUT_ATTRS = ( sizeof(zclSampleSw_InputAttrs_ep1) / sizeof(zclSampleSw_InputAttrs_ep1[0]) );
