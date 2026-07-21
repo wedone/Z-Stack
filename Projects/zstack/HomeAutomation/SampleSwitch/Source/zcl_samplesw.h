@@ -76,6 +76,10 @@ extern "C"
 
 #define SAMPLEAPP_END_DEVICE_REJOIN_DELAY 10000
 
+// 触摸按键轮询事件 (100ms周期)
+#define SAMPLESW_KEY_POLL_EVT             0x0040
+#define SAMPLESW_KEY_POLL_RATE            100
+
 /*********************************************************************
  * MACROS
  */

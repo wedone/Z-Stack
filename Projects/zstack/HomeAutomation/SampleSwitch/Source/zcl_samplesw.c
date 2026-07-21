@@ -105,6 +105,28 @@ extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[];
 extern CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS;
 
 /*********************************************************************
+ * 真实硬件引脚配置 (86四路智能开关)
+ * - 继电器: P1_0/P1_2/P1_6/P2_0 (低电平触发)
+ * - 触摸输入: P0_4/P0_5/P0_6/P0_7 (低电平有效, WTC6106BSI)
+ * - 状态灯: P0_0/P0_1/P0_2/P0_3 (反逻辑: 继电器OFF->LED亮)
+ */
+
+// 继电器引脚配置 (低电平触发)
+#define RELAY1_BIT           BV(0)   // P1_0
+#define RELAY2_BIT           BV(2)   // P1_2
+#define RELAY3_BIT           BV(6)   // P1_6
+#define RELAY4_BIT           BV(0)   // P2_0
+
+// 触摸按键引脚配置 (低电平有效)
+#define TOUCH_KEY_MASK       (BV(4) | BV(5) | BV(6) | BV(7))  // P0_4~P0_7
+
+// 继电器引脚位表 (按路数索引)
+static const uint8 relayPinBit[SAMPLESW_NUM_RELAYS] =
+{
+  RELAY1_BIT, RELAY2_BIT, RELAY3_BIT, RELAY4_BIT
+};
+
+/*********************************************************************
  * MACROS
  */
 #define UI_STATE_TOGGLE_LIGHT 1 //UI_STATE_BACK_FROM_APP_MENU is item #0, so app item numbers should start from 1
@@ -135,6 +157,9 @@ uint8 zclSampleSw_OnOffSwitchActions;
  */
 afAddrType_t zclSampleSw_DstAddr;
 
+// 触摸按键上一次状态 (用于下降沿检测)
+static uint8 touchKeyLastState = 0xFF;  // 初始为高电平(未触摸)
+
 // Endpoint to allow SYS_APP_MSGs
 static endPointDesc_t sampleSw_TestEp =
 {
@@ -161,6 +186,12 @@ static void zclSampleSw_HandleKeys( byte shift, byte keys );
 static void zclSampleSw_BasicResetCB( void );
 
 static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bdbCommissioningModeMsg);
+
+// 继电器控制相关函数
+static void zclSampleSw_RelayInit( void );
+static void zclSampleSw_SetRelay( uint8 relayIdx, uint8 onOff );
+static void zclSampleSw_OnOffCB( uint8 cmd );
+static void zclSampleSw_PollTouchKeys( void );
 
 
 // Functions to process ZCL Foundation incoming Command/Response messages
@@ -209,7 +240,7 @@ static zclGeneral_AppCallbacks_t zclSampleSw_CmdCallbacks =
 {
   zclSampleSw_BasicResetCB,               // Basic Cluster Reset command
   NULL,                                   // Identify Trigger Effect command
-  NULL,                                   // On/Off cluster commands
+  zclSampleSw_OnOffCB,                    // On/Off cluster commands
   NULL,                                   // On/Off cluster enhanced command Off with Effect
   NULL,                                   // On/Off cluster enhanced command On with Recall Global Scene
   NULL,                                   // On/Off cluster enhanced command On with Timed Off
@@ -315,6 +346,12 @@ void zclSampleSw_Init( byte task_id )
 
   UI_Init(zclSampleSw_TaskID, SAMPLEAPP_LCD_AUTO_UPDATE_EVT, SAMPLEAPP_KEY_AUTO_REPEAT_EVT, &zclSampleSw_IdentifyTime, APP_TITLE, &zclSampleSw_UiUpdateLcd, zclSampleSw_UiStatesMain);
 
+  // 初始化继电器GPIO和触摸按键引脚
+  zclSampleSw_RelayInit();
+
+  // 启动触摸按键轮询定时器 (100ms周期)
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_KEY_POLL_EVT, SAMPLESW_KEY_POLL_RATE);
+
   UI_UpdateLcd();
 }
 
@@ -399,6 +436,15 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
     UI_MainStateMachine(UI_KEY_AUTO_PRESSED);
     return ( events ^ SAMPLEAPP_KEY_AUTO_REPEAT_EVT );
   }
+
+  // 触摸按键轮询事件 (100ms周期)
+  if ( events & SAMPLESW_KEY_POLL_EVT )
+  {
+    zclSampleSw_PollTouchKeys();
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_KEY_POLL_EVT, SAMPLESW_KEY_POLL_RATE);
+    return ( events ^ SAMPLESW_KEY_POLL_EVT );
+  }
+
   // Discard unknown events
   return 0;
 }
@@ -518,8 +564,209 @@ static void zclSampleSw_BasicResetCB( void )
 {
   zclSampleSw_ResetAttributesToDefaultValues();
 
+  // 复位所有继电器为OFF
+  {
+    uint8 i;
+    for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+    {
+      zclSampleSw_SetRelay(i, LIGHT_OFF);
+    }
+  }
+
   // update the display
-  UI_UpdateLcd( ); 
+  UI_UpdateLcd( );
+}
+
+/*********************************************************************
+ * 继电器控制与触摸按键轮询实现
+ *********************************************************************/
+
+/*********************************************************************
+ * @fn      zclSampleSw_RelayInit
+ *
+ * @brief   初始化继电器GPIO和触摸按键引脚
+ *          - 继电器引脚 P1_0/P1_2/P1_6/P2_0 设为输出，初始为高(OFF)
+ *          - 触摸按键引脚 P0_4~P0_7 设为输入，上拉
+ *
+ * @param   none
+ *
+ * @return  none
+ */
+static void zclSampleSw_RelayInit( void )
+{
+  // 继电器引脚设为输出 (P1_0, P1_2, P1_6, P2_0)
+  P1DIR |= RELAY1_BIT | RELAY2_BIT | RELAY3_BIT;
+  P2DIR |= RELAY4_BIT;
+
+  // 继电器初始状态: 高电平=OFF (低电平触发)
+  P1 |= RELAY1_BIT | RELAY2_BIT | RELAY3_BIT;
+  P2 |= RELAY4_BIT;
+
+  // P1_0/P1_2/P1_6 设为通用GPIO (清SEL)
+  P1SEL &= ~(RELAY1_BIT | RELAY2_BIT | RELAY3_BIT);
+  // P2_0 设为通用GPIO
+  P2SEL &= ~(RELAY4_BIT);
+
+  // 触摸按键引脚 P0_4~P0_7 设为输入
+  P0DIR &= ~(TOUCH_KEY_MASK);
+  // P0_4~P0_7 设为通用GPIO (清SEL)
+  P0SEL &= ~(TOUCH_KEY_MASK);
+  // P0_4~P0_7 设为上拉输入 (P0INP对应位清0=上拉/下拉)
+  P0INP &= ~(TOUCH_KEY_MASK);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_SetRelay
+ *
+ * @brief   设置指定路继电器的状态，并同步LED和ZCL属性值
+ *          继电器低电平触发，LED反逻辑(继电器OFF->LED亮)
+ *
+ * @param   relayIdx - 继电器索引 (0~3)
+ * @param   onOff - LIGHT_ON 或 LIGHT_OFF
+ *
+ * @return  none
+ */
+static void zclSampleSw_SetRelay( uint8 relayIdx, uint8 onOff )
+{
+  if (relayIdx >= SAMPLESW_NUM_RELAYS)
+    return;
+
+  // 更新ZCL属性值
+  zclSampleSw_RelayState[relayIdx] = onOff;
+
+  // 控制继电器GPIO (低电平触发)
+  if (relayIdx < 3)
+  {
+    // 继电器1-3 在 P1
+    if (onOff == LIGHT_ON)
+      P1 &= ~relayPinBit[relayIdx];  // 低电平=ON
+    else
+      P1 |= relayPinBit[relayIdx];   // 高电平=OFF
+  }
+  else
+  {
+    // 继电器4 在 P2
+    if (onOff == LIGHT_ON)
+      P2 &= ~relayPinBit[relayIdx];
+    else
+      P2 |= relayPinBit[relayIdx];
+  }
+
+  // 同步状态LED (反逻辑: 继电器OFF->LED亮, 继电器ON->LED灭)
+  // LED1=P0_0, LED2=P0_1, LED3=P0_2, LED4=P0_3 (ACTIVE_LOW)
+  if (onOff == LIGHT_ON)
+  {
+    // 继电器ON -> LED灭 (ACTIVE_LOW下，写0=亮，写1=灭)
+    switch (relayIdx)
+    {
+      case 0: HAL_TURN_OFF_LED1(); break;
+      case 1: HAL_TURN_OFF_LED2(); break;
+      case 2: HAL_TURN_OFF_LED3(); break;
+      case 3: HAL_TURN_OFF_LED4(); break;
+    }
+  }
+  else
+  {
+    // 继电器OFF -> LED亮
+    switch (relayIdx)
+    {
+      case 0: HAL_TURN_ON_LED1(); break;
+      case 1: HAL_TURN_ON_LED2(); break;
+      case 2: HAL_TURN_ON_LED3(); break;
+      case 3: HAL_TURN_ON_LED4(); break;
+    }
+  }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_OnOffCB
+ *
+ * @brief   On/Off cluster命令回调 (COMMAND_ON/OFF/TOGGLE)
+ *          通过 zcl_getRawAFMsg() 获取目标端点，控制对应继电器
+ *
+ * @param   cmd - COMMAND_ON, COMMAND_OFF 或 COMMAND_TOGGLE
+ *
+ * @return  none
+ */
+static void zclSampleSw_OnOffCB( uint8 cmd )
+{
+  afIncomingMSGPacket_t *pMsg = zcl_getRawAFMsg();
+  uint8 endPoint;
+  uint8 relayIdx;
+  uint8 newOnOff;
+
+  if (pMsg == NULL)
+    return;
+
+  endPoint = pMsg->endPoint;
+
+  // 端点1-4 对应继电器0-3
+  if (endPoint < SAMPLESW_ENDPOINT_RELAY1 || endPoint > SAMPLESW_ENDPOINT_RELAY4)
+    return;
+
+  relayIdx = endPoint - SAMPLESW_ENDPOINT_RELAY1;
+
+  // 根据命令计算新状态
+  if (cmd == COMMAND_ON)
+  {
+    newOnOff = LIGHT_ON;
+  }
+  else if (cmd == COMMAND_OFF)
+  {
+    newOnOff = LIGHT_OFF;
+  }
+  else if (cmd == COMMAND_TOGGLE)
+  {
+    newOnOff = (zclSampleSw_RelayState[relayIdx] == LIGHT_ON) ? LIGHT_OFF : LIGHT_ON;
+  }
+  else
+  {
+    return;
+  }
+
+  // 设置继电器并同步LED和属性值
+  zclSampleSw_SetRelay(relayIdx, newOnOff);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_PollTouchKeys
+ *
+ * @brief   触摸按键轮询 (100ms周期)
+ *          读取P0_4~P0_7电平，检测下降沿(高->低)触发继电器翻转
+ *          WTC6106BSI触摸芯片: 触摸时低电平有效
+ *
+ * @param   none
+ *
+ * @return  none
+ */
+static void zclSampleSw_PollTouchKeys( void )
+{
+  uint8 currentState;
+  uint8 i;
+
+  // 读取P0_4~P0_7 (TOUCH_KEY_MASK = BV(4)|BV(5)|BV(6)|BV(7))
+  currentState = P0 & TOUCH_KEY_MASK;
+
+  // 检测下降沿: 上一次为高(未触摸), 当前为低(触摸)
+  // touchKeyLastState 中对应位为1表示高电平
+  // currentState 中对应位为0表示触摸(低电平有效)
+  // 下降沿 = (lastState & bit) && !(currentState & bit)
+  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+  {
+    uint8 bit = BV(4 + i);  // P0_4~P0_7
+    uint8 lastHigh = (touchKeyLastState & bit) != 0;
+    uint8 currLow = (currentState & bit) == 0;
+
+    if (lastHigh && currLow)
+    {
+      // 检测到下降沿，翻转对应继电器
+      uint8 newOnOff = (zclSampleSw_RelayState[i] == LIGHT_ON) ? LIGHT_OFF : LIGHT_ON;
+      zclSampleSw_SetRelay(i, newOnOff);
+    }
+  }
+
+  // 保存当前状态
+  touchKeyLastState = currentState;
 }
 
 /*********************************************************************
