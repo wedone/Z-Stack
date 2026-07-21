@@ -95,7 +95,7 @@ const uint16 zclSampleSw_clusterRevision_all = 0x0001; //currently all cluster i
 const uint8 zclSampleSw_HWRevision = SAMPLESW_HWVERSION;
 const uint8 zclSampleSw_ZCLVersion = SAMPLESW_ZCLVERSION;
 const uint8 zclSampleSw_ManufacturerName[] = { 16, 'T','e','x','a','s','I','n','s','t','r','u','m','e','n','t','s' };
-const uint8 zclSampleSw_ModelId[] = { 16, 'T','I','0','0','0','1',' ',' ',' ',' ',' ',' ',' ',' ',' ',' ' };
+const uint8 zclSampleSw_ModelId[] = { 11, 'a','l','a','b','.','s','w','i','t','c','h' };
 const uint8 zclSampleSw_DateCode[] = { 16, '2','0','0','6','0','8','3','1',' ',' ',' ',' ',' ',' ',' ',' ' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 

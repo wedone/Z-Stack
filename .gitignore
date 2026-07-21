@@ -1,0 +1,28 @@
+# IAR 编译输出
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/CoordinatorEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/EndDeviceEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/settings/
+*.dep
+
+# Object files
+*.o
+*.obj
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# OS 文件
+Thumbs.db
+.DS_Store
+
+# IDE
+.trae/
