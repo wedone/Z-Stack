@@ -22,7 +22,7 @@
   its documentation for any purpose.
 
   YOU FURTHER ACKNOWLEDGE AND AGREE THAT THE SOFTWARE AND DOCUMENTATION ARE
-  PROVIDED �AS IS� WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+  PROVIDED �AS IS� WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED,
   INCLUDING WITHOUT LIMITATION, ANY WARRANTY OF MERCHANTABILITY, TITLE,
   NON-INFRINGEMENT AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL
   TEXAS INSTRUMENTS OR ITS LICENSORS BE LIABLE OR OBLIGATED UNDER CONTRACT,
@@ -453,12 +453,17 @@ static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bd
       }
     break;
     case BDB_COMMISSIONING_INITIALIZATION:
-      //Initialization notification can only be successful. Failure on initialization 
-      //only happens for ZED and is notified as BDB_COMMISSIONING_PARENT_LOST notification
-      
-      //YOUR JOB:
-      //We are on a network, what now?
-      
+      if(bdbCommissioningModeMsg->bdbCommissioningStatus == BDB_COMMISSIONING_SUCCESS)
+      {
+        //已成功恢复网络
+      }
+      else
+      {
+        //设备未入网，自动启动网络引导（加入现有网络）+ 发现绑定
+        //注意：不请求 NWK_FORMATION，避免路由器创建自己的分布式网络
+        bdb_StartCommissioning(BDB_COMMISSIONING_MODE_NWK_STEERING |
+                               BDB_COMMISSIONING_MODE_FINDING_BINDING);
+      }
     break;
 #if ZG_BUILD_ENDDEVICE_TYPE    
     case BDB_COMMISSIONING_PARENT_LOST:
