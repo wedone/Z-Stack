@@ -1,9 +1,11 @@
 zigbee-herdsman-converters/
-# IAR 编译输出
+# IAR 编译输出（固件文件用 git add -f 强制跟踪）
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB - OTAClient/
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/CoordinatorEB/
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/EndDeviceEB/
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/settings/
+Projects/zstack/OTA/Boot/CC2530DB/OTA-Boot/
 *.dep
 
 # Object files

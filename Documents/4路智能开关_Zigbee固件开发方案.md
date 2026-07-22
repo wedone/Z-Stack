@@ -704,50 +704,132 @@ static void handleOnOff(uint8_t ep, uint8_t cmd) {
 
 ---
 
-## 12. OTA 升级预留方案
+## 12. OTA 升级实现方案
 
-### 12.1 策略
+### 12.1 实现方案
 
-**本版本不实现 OTA 功能，仅做 Flash 分区预留和 Cluster 注册预留**，后续版本再完成 OTA 实现。
+**采用 TI Z-Stack 自带的 SampleSwitch OTA Client 配置**（RouterEB - OTAClient），无需修改源代码。该配置已包含：
+- `OTA_CLIENT=TRUE` 宏定义（[zcl_samplesw.c](file:///d:/vc/Z-Stack/Projects/zstack/HomeAutomation/SampleSwitch/Source/zcl_samplesw.c) 中 `#if defined (OTA_CLIENT)` 包裹的代码自动启用）
+- OTA 集群注册（`ZCL_CLUSTER_ID_OTA` = 0x0019 作为 InCluster 自动注册到端点）
+- OTA Client 任务处理（`zclOTA_Register()`、`zclSampleSw_ProcessOTAMsgs()`）
+- 链接器脚本使用 `ota.xcl`，与 OTA Bootloader 配套的 Flash 分区
 
-### 12.2 CC2530F256 Flash 分区现状
+### 12.2 CC2530F256 Flash 分区（ota.xcl 实际布局）
 
-CC2530F256 共 256KB Flash（128 页，每页 2KB），当前分区：
+CC2530F256 共 256KB Flash，OTA 配置的分区：
 
-| 区域 | 页范围 | 大小 | 地址 | 说明 |
-|------|--------|------|------|------|
-| Boot Loader | 0~3 | 8KB | 0x0000~0x1FFF | Serial Boot Loader（已预留） |
-| 用户代码 | 4~120 | ~234KB | 0x2000~0x78000 | 应用程序 + Z-Stack |
-| NV 存储 | 121~126 | 12KB | — | 6 页 NV |
-| Lock Bits | 127 | 2KB | — | Flash 锁定位 |
+| 区域 | 地址范围 | 大小 | 说明 |
+|------|----------|------|------|
+| **OTA Boot Loader** | 0x0000~0x07FF | 2KB | `Boot.hex`，启动入口，校验并加载用户固件 |
+| **用户代码（OTA Client）** | 0x0800~0x7C7FF | ~494KB | `RouterEB-OTAClient.hex`，含 Z-Stack + 应用 + OTA Client |
+| **NV 存储** | 末尾倒数 6 页 | 12KB | Z-Stack NV 项目（网络参数、绑定表等） |
+| **IEEE 地址** | 末尾倒数 1 页 | 8 字节 | EUI-64（出厂烧录） |
+| **Lock Bits** | 末尾页 | 2KB | Flash 锁定位 |
 
-### 12.3 OTA 预留方案
+> **关键差异**：非 OTA 配置 (`RouterEB`) 的代码起始地址是 `0x0000`；OTA 配置是 `0x0800`，前 2KB 留给 Bootloader。
 
-后续实现 OTA 时，需要从用户代码区末尾划分出 OTA Image 区域：
+### 12.3 固件文件清单
 
-| 区域 | 页范围 | 大小 | 说明 |
-|------|--------|------|------|
-| Boot Loader | 0~3 | 8KB | 已有，需升级为 OTA Boot Loader |
-| 用户代码 | 4~60 | ~114KB | 当前固件（含 Z-Stack 约占 80~100KB，有富裕） |
-| OTA Image | 61~120 | ~120KB | OTA 下载区（预留） |
-| NV 存储 | 121~126 | 12KB | 不变 |
-| Lock Bits | 127 | 2KB | 不变 |
+| 文件 | 路径 | 用途 |
+|------|------|------|
+| `Boot.hex` | `Projects/zstack/OTA/Boot/CC2530DB/OTA-Boot/Exe/Boot.hex` | OTA Bootloader，烧录到 0x0000 |
+| `RouterEB-OTAClient.hex` | `Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB - OTAClient/Exe/RouterEB-OTAClient.hex` | 应用固件，烧录到 0x0800 |
+| `5678-1234-0001ABCD.zigbee` | 同上目录 | Zigbee OTA 镜像（供 zigbee2mqtt 无线升级用） |
 
-### 12.4 本版本预留内容
+### 12.4 OTA 镜像参数
 
-1. **xcl 链接脚本注释**: 在 IAR 项目 xcl 文件中添加 OTA 分区注释，标记 0x1E000 为 OTA Image 起始地址
-2. **OTA Cluster 注册**: 在 Endpoint 1 添加 `ZCL_CLUSTER_ID_OTA` (0x0019) 的 InCluster，使设备在 Z2M 端显示支持 OTA
-3. **编译开关**: 添加 `#define ZCL_OTA 0` 宏，后续设为 1 即可启用
+由 `OtaConverter.exe` 生成 `.zigbee` 文件时的参数（[SampleSwitch.ewp](file:///d:/vc/Z-Stack/Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/SampleSwitch.ewp) postbuild）：
 
-```c
-// preinclude.h 预留
-#define ZCL_OTA  0  // 0=预留, 1=启用 OTA
+| 参数 | 值 | 含义 |
+|------|------|------|
+| `-t0x1234` | 0x1234 | Image Type（镜像类型） |
+| `-m0x5678` | 0x5678 | Manufacturer Code（厂商代码） |
+| `-v0001ABCD` | 0x0001ABCD | File Version（文件版本） |
+| `-pCC2530DB` | CC2530DB | 平台标识 |
 
-// zcl_DIYRuZRT_data.c 中 InClusterList 预留
-#if ZCL_OTA
-  ZCL_CLUSTER_ID_OTA,
-#endif
+> 这三个值（厂商代码 + 镜像类型 + 文件版本）是 zigbee2mqtt OTA 索引匹配设备的关键字段。
+
+### 12.5 zigbee2mqtt 无线 OTA 升级
+
+#### 是否支持
+
+**支持**。zigbee2mqtt 自带 OTA 升级功能，可加载自定义 OTA 镜像。本设备烧录 OTA Client 固件后，在 Z2M 中会显示 OTA 入口。
+
+#### 配置方法
+
+**方案 A：每次升级时通过 MQTT 临时指定固件**
+
+向 Z2M 发送 MQTT 消息，payload 中直接指定本地 `.zigbee` 文件路径或 URL：
+
+```bash
+# 触发升级（指定本地固件路径）
+mosquitto_pub -t zigbee2mqtt/bridge/request/device/ota_update/update \
+  -m '{"id":"<设备friendly_name>","url":"file:///opt/zigbee2mqtt/data/ota/5678-1234-0001ABCD.zigbee"}'
 ```
+
+`url` 支持以下形式（[官方 OTA 文档](https://www.zigbee2mqtt.io/guide/usage/ota_updates.html)）：
+- 本地文件：`file:///path/to/firmware.zigbee`（注意三斜杠）
+- 远程 URL：`https://example.com/firmware.zigbee`
+- hex 字符串：`{"hex":{"data":"1EF1EEB0...","file_name":"my-file.ota"}}`
+
+**方案 B：建立自定义 OTA 索引（推荐长期使用）**
+
+在 Z2M 的 `data/` 目录下创建 `ota_index.json`，然后在 `configuration.yaml` 中引用：
+
+```yaml
+ota:
+  zigbee_ota_override_index_location: ota_index.json
+```
+
+`ota_index.json` 格式（参考 [zigbee-OTA/index.json](https://github.com/Koenkk/zigbee-OTA/blob/master/index.json)）：
+
+```json
+[
+  {
+    "url": "file:///opt/zigbee2mqtt/data/ota/5678-1234-0001ABCD.zigbee",
+    "fileVersion": 43981,
+    "fileSize": <文件字节数>,
+    "manufacturerCode": 22136,
+    "imageType": 4660,
+    "sha512": "<sha512 校验值>",
+    "modelId": null,
+    "notes": "SampleSwitch OTA Client v0.0001ABCD"
+  }
+]
+```
+
+字段换算（十进制）：
+- `manufacturerCode`: 0x5678 = 22136
+- `imageType`: 0x1234 = 4660
+- `fileVersion`: 0x0001ABCD = 109517
+- `sha512`: 用 `sha512sum 5678-1234-0001ABCD.zigbee` 命令计算
+
+> **匹配逻辑**：设备主动查询 OTA 时会报告自己的 `manufacturerCode`、`imageType`、`fileVersion`，Z2M 按这三字段在索引中查找。版本号更大的才会触发升级。
+
+#### 触发 OTA 升级
+
+通过 Z2M 前端 UI 的 OTA 页面（"检查更新" → "更新"），或通过 MQTT 命令：
+
+```bash
+# 检查更新
+mosquitto_pub -t zigbee2mqtt/bridge/request/device/ota_update/check \
+  -m '{"id":"<设备friendly_name>"}'
+
+# 启动升级
+mosquitto_pub -t zigbee2mqtt/bridge/request/device/ota_update/update \
+  -m '{"id":"<设备friendly_name>"}'
+
+# 查看进度（订阅设备主题）
+mosquitto_sub -t 'zigbee2mqtt/<设备friendly_name>'
+# 输出示例: {"update":{"state":"updating","progress":45.2,"remaining":120}}
+```
+
+#### 注意事项
+
+- CC2530 OTA 升级**较慢**（10~60 分钟），因 Flash 写入速度有限
+- 设备需先烧录 OTA Bootloader（[Boot.hex](file:///d:/vc/Z-Stack/Projects/zstack/OTA/Boot/CC2530DB/OTA-Boot/Exe/Boot.hex)），否则无线 OTA 无法工作
+- 升级过程中设备仍可使用，但网络流量增加，建议**单设备逐个升级**
+- OTA 升级完成后设备会自动重启，Z2M 会重新 interview 设备
 
 ---
 
@@ -777,15 +859,100 @@ CC2530F256 共 256KB Flash（128 页，每页 2KB），当前分区：
 
 | 工具 | 版本/型号 | 用途 |
 |------|----------|------|
-| IAR Embedded Workbench | for 8051 | 编译 Z-Stack 固件 |
+| IAR Embedded Workbench | for 8051 (V8.10.15) | 编译 Z-Stack 固件 |
 | Z-Stack 3.0.2 | TI 官方 | Zigbee 协议栈 |
 | DIYRuZ_RT 源码 | GitHub | 固件框架基础 |
-| SmartRF Flash Programmer | TI 官方 | 烧录固件 |
-| CC Debugger | 或兼容工具 | 调试器 |
+| CCloader | 开源工具 | 通过 CC Debugger 烧录 .hex 到 CC2530 |
+| CC Debugger | TI 官方或兼容 | 调试/烧录器 |
+
+### 14.1 IAR CLI 批量编译
+
+无需打开 IAR IDE，可直接用 `IarBuild.exe` 命令行编译。脚本路径示例：
+
+```powershell
+# IAR 路径
+$IAR = "C:\Program Files (x86)\IAR Systems\Embedded Workbench\common\bin\IarBuild.exe"
+
+# 1) 编译 OTA Bootloader
+Set-Location "D:\vc\Z-Stack\Projects\zstack\OTA\Boot\CC2530DB"
+& $IAR "Boot.ewp" -build "OTA Boot Loader" -log errors
+
+# 2) 编译 SampleSwitch OTA Client 应用固件
+Set-Location "D:\vc\Z-Stack\Projects\zstack\HomeAutomation\SampleSwitch\CC2530DB"
+& $IAR "SampleSwitch.ewp" -build "RouterEB - OTAClient" -log errors
+```
+
+> **注意**：IarBuild 不接受绝对路径，必须 `Set-Location` 切换到 .ewp 所在目录后用相对路径。配置名带空格的（如 `RouterEB - OTAClient`）需用引号包裹。
+
+### 14.2 .hex 文件输出配置（已完成）
+
+为支持 CCloader 烧录，已修改两个 .ewp 工程文件让其额外输出 Intel-extended HEX 格式：
+
+| 工程 | 修改位置 | 修改内容 |
+|------|----------|----------|
+| [Boot.ewp](file:///d:/vc/Z-Stack/Projects/zstack/OTA/Boot/CC2530DB/Boot.ewp) | XLINK → ExtraOutput | `AllowExtraOutput` 0→1，`ExtraOutputFile` `Boot.a51`→`Boot.hex` |
+| [SampleSwitch.ewp](file:///d:/vc/Z-Stack/Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/SampleSwitch.ewp) | RouterEB - OTAClient 配置 XLINK → ExtraOutput | `ExtraOutputFile` `.sim`→`.hex`，`ExtraOutputFormat` state 60→23 |
+| [SampleSwitch.ewp](file:///d:/vc/Z-Stack/Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/SampleSwitch.ewp) | postbuild 命令 | OtaConverter 输入从 `.sim` 改为 `.hex` |
+
+> IAR XLINK `ExtraOutputFormat` state 编号：`23` = Intel-extended hex；`60` = sim 调试格式；`57` = d51 调试格式。
+
+## 15. CCloader 烧录操作
+
+### 15.1 烧录前置条件
+
+- CC Debugger（或兼容调试器）通过 5Pin 排线连接设备 J2 调试接口
+- CC Debugger 驱动已安装，红色 LED 亮起表示连接正常（设备上电）
+- CCloader 上位机程序已就绪（通常为 `CCloader.exe` 或 `ccloader.py`）
+
+### 15.2 烧录固件清单（首次烧录 OTA Client 设备）
+
+| 序号 | 文件 | 路径 | 烧录地址 |
+|------|------|------|----------|
+| 1 | `Boot.hex` | `Projects/zstack/OTA/Boot/CC2530DB/OTA-Boot/Exe/Boot.hex` | 0x0000~0x07FF |
+| 2 | `RouterEB-OTAClient.hex` | `Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB - OTAClient/Exe/RouterEB-OTAClient.hex` | 0x0800 起 |
+
+> **务必先擦除整个 Flash 再烧录**：CC2530 上电后会先执行 0x0000 处的 Bootloader，再跳转到 0x0800 处的用户固件。如果只烧录应用固件不烧录 Bootloader，**设备无法启动**。
+
+### 15.3 CCloader 烧录命令
+
+CCloader 常见用法（具体参数以所用 CCloader 版本为准）：
+
+```bash
+# 擦除整片 Flash（必须！避免残留数据干扰）
+CCloader.exe erase
+
+# 烧录 Bootloader（先烧）
+CCloader.exe write Boot.hex
+
+# 烧录应用固件（后烧）
+CCloader.exe write RouterEB-OTAClient.hex
+
+# 也可使用 --erase 参数一次性擦写
+CCloader.exe --erase --write Boot.hex RouterEB-OTAClient.hex
+```
+
+### 15.4 从普通固件升级到 OTA Client 固件
+
+如果设备之前烧录的是普通 `RouterEB` 固件（无 OTA），升级到 OTA Client 需按以下步骤：
+
+1. **擦除整片 Flash**（必须，否则地址冲突）
+2. 烧录 `Boot.hex`（OTA Bootloader）
+3. 烧录 `RouterEB-OTAClient.hex`（应用固件）
+4. 重新配网（之前 NV 中的网络信息已被擦除）
+
+### 15.5 仅更新应用固件（保留 Bootloader）
+
+OTA Bootloader 烧录一次后通常无需再烧。后续更新应用固件只需：
+
+```bash
+CCloader.exe --erase --write RouterEB-OTAClient.hex
+```
+
+> 注意：擦除会清除 NV 区，设备需重新配网。如需保留网络参数，可用 CCloader 的局部擦写功能（仅擦写应用代码区，保留 NV），但需明确指定地址范围。
 
 ---
 
-## 15. 功能确认汇总
+## 16. 功能确认汇总
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
@@ -797,17 +964,20 @@ CC2530F256 共 256KB Flash（128 页，每页 2KB），当前分区：
 | 触摸本地控制 | ✅ 确认 | WTC6106BSI 高低电平输出，轮询检测 |
 | 配网按键 | ✅ 确认 | S1 长按 5 秒进入配网 |
 | 借壳 TS0004 | ✅ 确认 | Z2M 自动识别，备选 External Converter |
-| OTA 升级 | ⏳ 预留 | Flash 分区预留 + Cluster 预留，后续版本实现 |
+| OTA 升级 | ✅ 已实现 | 采用 SampleSwitch 自带 RouterEB - OTAClient 配置，已生成 .hex + .zigbee 文件 |
 | 温度传感器 | ❌ 移除 | 本设备无温度传感器，移除 DS18B20 相关代码 |
 
 ---
 
-## 16. 参考资料
+## 17. 参考资料
 
 | 资源 | 链接 |
 |------|------|
 | DIYRuZ_RT 源码 | https://github.com/diyruz/diyruz_rt |
 | zigbee-herdsman-converters | https://github.com/Koenkk/zigbee-herdsman-converters |
+| Zigbee2MQTT OTA 文档 | https://www.zigbee2mqtt.io/guide/usage/ota_updates.html |
+| zigbee-OTA 索引仓库 | https://github.com/Koenkk/zigbee-OTA |
+| zigbee-ota-file-editor 工具 | https://nerivec.github.io/zigbee-ota-file-editor/ |
 | Zigbee2MQTT 文档 | https://www.zigbee2mqtt.io/ |
 | TI Z-Stack 文档 | https://www.ti.com/product/CC2530 |
 | WTC6106BSI 数据手册 | https://m.elecfans.com/article/1228598.html |
@@ -816,4 +986,5 @@ CC2530F256 共 256KB Flash（128 页，每页 2KB），当前分区：
 ---
 
 *文档生成时间: 2026-07-17*
-*版本: v2.0*
+*最后更新: 2026-07-22 (新增 OTA 实现 + CCloader 烧录章节)*
+*版本: v2.1*

@@ -5412,7 +5412,7 @@
             <archiveVersion>1</archiveVersion>
             <data>
                 <prebuild></prebuild>
-                <postbuild>"$PROJ_DIR$\..\..\..\..\tools\OTA\OtaConverter\Release\OtaConverter.exe" "$PROJ_DIR$\RouterEB - OTAClient\Exe\RouterEB-OTAClient.sim" -o"$PROJ_DIR$\RouterEB - OTAClient\Exe" -t0x1234 -m0x5678 -v0001ABCD -pCC2530DB</postbuild>
+                <postbuild>"$PROJ_DIR$\..\..\..\..\tools\OTA\OtaConverter\Release\OtaConverter.exe" "$PROJ_DIR$\RouterEB - OTAClient\Exe\RouterEB-OTAClient.hex" -o"$PROJ_DIR$\RouterEB - OTAClient\Exe" -t0x1234 -m0x5678 -v0001ABCD -pCC2530DB</postbuild>
             </data>
         </settings>
         <settings>
@@ -5630,12 +5630,12 @@
                 </option>
                 <option>
                     <name>ExtraOutputFile</name>
-                    <state>RouterEB-OTAClient.sim</state>
+                    <state>RouterEB-OTAClient.hex</state>
                 </option>
                 <option>
                     <name>ExtraOutputFormat</name>
                     <version>11</version>
-                    <state>60</state>
+                    <state>23</state>
                 </option>
                 <option>
                     <name>ExtraFormatVariant</name>
