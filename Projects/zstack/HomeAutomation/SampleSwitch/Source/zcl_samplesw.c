@@ -167,6 +167,9 @@ afAddrType_t zclSampleSw_DstAddr;
 // 触摸按键上一次状态 (用于下降沿检测)
 static uint8 touchKeyLastState = 0xFF;  // 初始为高电平(未触摸)
 
+// 上一次上报的 input_state 值 (用于检测变化时才上报)
+static float lastReportedInputState[SAMPLESW_NUM_INPUTS] = {0.0f, 0.0f, 0.0f, 0.0f};
+
 // Endpoint to allow SYS_APP_MSGs
 static endPointDesc_t sampleSw_TestEp =
 {
@@ -199,6 +202,10 @@ static void zclSampleSw_RelayInit( void );
 static void zclSampleSw_SetRelay( uint8 relayIdx, uint8 onOff );
 static void zclSampleSw_OnOffCB( uint8 cmd );
 static void zclSampleSw_PollTouchKeys( void );
+
+// ZCL 属性变化主动上报函数
+static void zclSampleSw_ReportOnOffAttr( uint8 endpoint, uint8 value );
+static void zclSampleSw_ReportAnalogInputAttr( uint8 endpoint, float value );
 
 
 // Functions to process ZCL Foundation incoming Command/Response messages
@@ -768,6 +775,85 @@ static void zclSampleSw_OnOffCB( uint8 cmd )
 
   // 设置继电器并同步LED和属性值
   zclSampleSw_SetRelay(relayIdx, newOnOff);
+
+  // 主动上报 On/Off 属性变化给协调器 (Z2M)
+  zclSampleSw_ReportOnOffAttr(SAMPLESW_ENDPOINT_RELAY1 + relayIdx, newOnOff);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ReportOnOffAttr
+ *
+ * @brief   主动上报 On/Off 属性变化给协调器 (Z2M)
+ *          通过 ZCL Report Attributes 命令发送
+ *
+ * @param   endpoint - 源端点 (SAMPLESW_ENDPOINT_RELAY1~4)
+ * @param   value - On/Off 属性值 (LIGHT_ON 或 LIGHT_OFF)
+ *
+ * @return  none
+ */
+static void zclSampleSw_ReportOnOffAttr( uint8 endpoint, uint8 value )
+{
+  zclReportCmd_t *pReportCmd;
+  afAddrType_t dstAddr;
+
+  // 目标地址: 协调器 (0x0000), endpoint 1
+  dstAddr.addrMode = (afAddrMode_t)Addr16Bit;
+  dstAddr.endPoint = 0x01;
+  dstAddr.addr.shortAddr = 0x0000;
+
+  // 分配 report 命令内存 (1 个属性)
+  pReportCmd = osal_mem_alloc(sizeof(zclReportCmd_t) + sizeof(zclReport_t));
+  if (pReportCmd != NULL)
+  {
+    pReportCmd->numAttr = 1;
+    pReportCmd->attrList[0].attrID = ATTRID_ON_OFF;
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_BOOLEAN;
+    pReportCmd->attrList[0].attrData = (uint8 *)&value;
+
+    zcl_SendReportCmd(endpoint, &dstAddr, ZCL_CLUSTER_ID_GEN_ON_OFF,
+                      pReportCmd, ZCL_FRAME_SERVER_CLIENT_DIR,
+                      TRUE, bdb_getZCLFrameCounter());
+
+    osal_mem_free(pReportCmd);
+  }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ReportAnalogInputAttr
+ *
+ * @brief   主动上报 genAnalogInput.presentValue 属性变化给协调器 (Z2M)
+ *          通过 ZCL Report Attributes 命令发送
+ *
+ * @param   endpoint - 源端点 (SAMPLESW_ENDPOINT_INPUT1~4)
+ * @param   value - presentValue 属性值 (float 类型)
+ *
+ * @return  none
+ */
+static void zclSampleSw_ReportAnalogInputAttr( uint8 endpoint, float value )
+{
+  zclReportCmd_t *pReportCmd;
+  afAddrType_t dstAddr;
+
+  // 目标地址: 协调器 (0x0000), endpoint 1
+  dstAddr.addrMode = (afAddrMode_t)Addr16Bit;
+  dstAddr.endPoint = 0x01;
+  dstAddr.addr.shortAddr = 0x0000;
+
+  // 分配 report 命令内存 (1 个属性)
+  pReportCmd = osal_mem_alloc(sizeof(zclReportCmd_t) + sizeof(zclReport_t));
+  if (pReportCmd != NULL)
+  {
+    pReportCmd->numAttr = 1;
+    pReportCmd->attrList[0].attrID = ATTRID_IOV_BASIC_PRESENT_VALUE;
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_SINGLE_PREC;
+    pReportCmd->attrList[0].attrData = (uint8 *)&value;
+
+    zcl_SendReportCmd(endpoint, &dstAddr, ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC,
+                      pReportCmd, ZCL_FRAME_SERVER_CLIENT_DIR,
+                      TRUE, bdb_getZCLFrameCounter());
+
+    osal_mem_free(pReportCmd);
+  }
 }
 
 /*********************************************************************
@@ -801,7 +887,15 @@ static void zclSampleSw_PollTouchKeys( void )
 
     // 更新触摸输入状态 (0.0=未触摸, 1.0=触摸, float类型)
     // 低电平有效: currLow为true表示触摸
-    zclSampleSw_InputState[i] = currLow ? 1.0f : 0.0f;
+    float newInputState = currLow ? 1.0f : 0.0f;
+    zclSampleSw_InputState[i] = newInputState;
+
+    // input_state 变化时主动上报给协调器 (Z2M)
+    if (newInputState != lastReportedInputState[i])
+    {
+      zclSampleSw_ReportAnalogInputAttr(SAMPLESW_ENDPOINT_INPUT1 + i, newInputState);
+      lastReportedInputState[i] = newInputState;
+    }
 
     if (lastHigh && currLow)
     {
