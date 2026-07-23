@@ -87,6 +87,12 @@ extern "C"
 #define SAMPLESW_KEY_POLL_EVT             0x0040
 #define SAMPLESW_KEY_POLL_RATE            100
 
+// 触摸按键去抖: 连续检测到N次同一新状态才确认 (N x 100ms)
+#define SAMPLESW_KEY_DEBOUNCE_COUNT       3
+
+// 上报节流: 每次上报后冷却N次轮询周期才允许下次上报 (N x 100ms)
+#define SAMPLESW_REPORT_COOLDOWN          5
+
 /*********************************************************************
  * MACROS
  */

@@ -164,11 +164,17 @@ uint8 zclSampleSw_OnOffSwitchActions;
  */
 afAddrType_t zclSampleSw_DstAddr;
 
-// 触摸按键上一次状态 (用于下降沿检测)
+// 触摸按键已确认状态 (用于下降沿检测, 去抖后的稳定值)
 static uint8 touchKeyLastState = 0xFF;  // 初始为高电平(未触摸)
+
+// 触摸按键去抖计数器 (连续检测到与已确认状态不同电平的次数)
+static uint8 touchKeyDebounceCount[SAMPLESW_NUM_INPUTS] = {0, 0, 0, 0};
 
 // 上一次上报的 input_state 值 (用于检测变化时才上报)
 static float lastReportedInputState[SAMPLESW_NUM_INPUTS] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+// 上报冷却计数器 (每次上报后设为SAMPLESW_REPORT_COOLDOWN, 递减到0才允许下次上报)
+static uint8 reportCooldown[SAMPLESW_NUM_INPUTS] = {0, 0, 0, 0};
 
 // Endpoint to allow SYS_APP_MSGs
 static endPointDesc_t sampleSw_TestEp =
@@ -860,12 +866,14 @@ static void zclSampleSw_ReportAnalogInputAttr( uint8 endpoint, float value )
  * @fn      zclSampleSw_PollTouchKeys
  *
  * @brief   触摸按键轮询 (100ms周期)
- *          读取P0_4~P0_7电平，检测下降沿(高->低)触发继电器翻转
+ *          读取P0_4~P0_7电平，去抖后检测下降沿(高->低)触发继电器翻转
  *          WTC6106BSI触摸芯片: 触摸时低电平有效
+ *          去抖: 连续SAMPLESW_KEY_DEBOUNCE_COUNT次检测到同一新状态才确认
+ *          节流: 每次上报后冷却SAMPLESW_REPORT_COOLDOWN周期才允许下次上报
  *
  * @param   none
  *
- * @return  none
+ * @return   none
  */
 static void zclSampleSw_PollTouchKeys( void )
 {
@@ -875,38 +883,56 @@ static void zclSampleSw_PollTouchKeys( void )
   // 读取P0_4~P0_7 (TOUCH_KEY_MASK = BV(4)|BV(5)|BV(6)|BV(7))
   currentState = P0 & TOUCH_KEY_MASK;
 
-  // 检测下降沿: 上一次为高(未触摸), 当前为低(触摸)
-  // touchKeyLastState 中对应位为1表示高电平
-  // currentState 中对应位为0表示触摸(低电平有效)
-  // 下降沿 = (lastState & bit) && !(currentState & bit)
   for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
   {
     uint8 bit = BV(4 + i);  // P0_4~P0_7
-    uint8 lastHigh = (touchKeyLastState & bit) != 0;
-    uint8 currLow = (currentState & bit) == 0;
+    uint8 currLow = (currentState & bit) == 0;   // 当前是否触摸(低电平有效)
+    uint8 lastLow = (touchKeyLastState & bit) == 0;  // 已确认的触摸状态
 
-    // 更新触摸输入状态 (0.0=未触摸, 1.0=触摸, float类型)
-    // 低电平有效: currLow为true表示触摸
-    float newInputState = currLow ? 1.0f : 0.0f;
-    zclSampleSw_InputState[i] = newInputState;
-
-    // input_state 变化时主动上报给协调器 (Z2M)
-    if (newInputState != lastReportedInputState[i])
+    // 去抖: 连续检测到与已确认状态不同的电平, 计数器递增
+    if (currLow != lastLow)
     {
-      zclSampleSw_ReportAnalogInputAttr(SAMPLESW_ENDPOINT_INPUT1 + i, newInputState);
-      lastReportedInputState[i] = newInputState;
+      touchKeyDebounceCount[i]++;
+      if (touchKeyDebounceCount[i] >= SAMPLESW_KEY_DEBOUNCE_COUNT)
+      {
+        // 达到去抖阈值, 确认状态变化
+        touchKeyDebounceCount[i] = 0;
+
+        // 更新已确认状态
+        if (currLow)
+          touchKeyLastState &= ~bit;  // 确认为低电平(触摸)
+        else
+          touchKeyLastState |= bit;   // 确认为高电平(未触摸)
+
+        // 更新触摸输入状态 (0.0=未触摸, 1.0=触摸)
+        zclSampleSw_InputState[i] = currLow ? 1.0f : 0.0f;
+
+        // 下降沿(未触摸->触摸)时翻转对应继电器
+        if (currLow)
+        {
+          uint8 newOnOff = (zclSampleSw_RelayState[i] == LIGHT_ON) ? LIGHT_OFF : LIGHT_ON;
+          zclSampleSw_SetRelay(i, newOnOff);
+        }
+      }
+    }
+    else
+    {
+      // 电平与已确认状态一致, 重置去抖计数器
+      touchKeyDebounceCount[i] = 0;
     }
 
-    if (lastHigh && currLow)
+    // 上报节流: 冷却期外且状态有变化才上报
+    if (reportCooldown[i] == 0 && zclSampleSw_InputState[i] != lastReportedInputState[i])
     {
-      // 检测到下降沿，翻转对应继电器
-      uint8 newOnOff = (zclSampleSw_RelayState[i] == LIGHT_ON) ? LIGHT_OFF : LIGHT_ON;
-      zclSampleSw_SetRelay(i, newOnOff);
+      zclSampleSw_ReportAnalogInputAttr(SAMPLESW_ENDPOINT_INPUT1 + i, zclSampleSw_InputState[i]);
+      lastReportedInputState[i] = zclSampleSw_InputState[i];
+      reportCooldown[i] = SAMPLESW_REPORT_COOLDOWN;
     }
+
+    // 冷却计数器递减
+    if (reportCooldown[i] > 0)
+      reportCooldown[i]--;
   }
-
-  // 保存当前状态
-  touchKeyLastState = currentState;
 }
 
 /*********************************************************************
