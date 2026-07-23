@@ -144,6 +144,15 @@
 
 #define HAL_KEY_JOY_CHN   HAL_ADC_CHANNEL_6
 
+/* 86四路智能开关: P2_0用于继电器4, P0_6(AIN6)用于触摸按键4
+ * Joystick(摇杆)功能与继电器/触摸引脚冲突:
+ *  - P2_0被固件设为继电器4输出(高电平), HalKeyPoll误判为Joystick按下
+ *  - 误触发后调用halGetJoyKeyInput()读AIN6(P0_6)的ADC, 与触摸按键4冲突
+ *  - halGetJoyKeyInput内的do-while阻塞循环占用CPU, 拖慢网络协议栈
+ * 禁用Joystick相关代码以消除冲突和CPU阻塞
+ */
+#define HAL_KEY_JOY_DISABLE
+
 
 /**************************************************************************************************
  *                                            TYPEDEFS
@@ -191,8 +200,10 @@ void HalKeyInit( void )
   HAL_KEY_SW_6_DIR &= ~(HAL_KEY_SW_6_BIT);    /* Set pin direction to Input */
 #endif
 
+#ifndef HAL_KEY_JOY_DISABLE
   HAL_KEY_JOY_MOVE_SEL &= ~(HAL_KEY_JOY_MOVE_BIT); /* Set pin function to GPIO */
   HAL_KEY_JOY_MOVE_DIR &= ~(HAL_KEY_JOY_MOVE_BIT); /* Set pin direction to Input */
+#endif
 
 
   /* Initialize callback function */
@@ -244,6 +255,7 @@ void HalKeyConfig (bool interruptEnable, halKeyCBack_t cback)
 
 
 
+#ifndef HAL_KEY_JOY_DISABLE
     /* Rising/Falling edge configuratinn */
 
     HAL_KEY_JOY_MOVE_ICTL &= ~(HAL_KEY_JOY_MOVE_EDGEBIT);    /* Clear the edge bit */
@@ -261,6 +273,7 @@ void HalKeyConfig (bool interruptEnable, halKeyCBack_t cback)
     HAL_KEY_JOY_MOVE_ICTL |= HAL_KEY_JOY_MOVE_ICTLBIT;
     HAL_KEY_JOY_MOVE_IEN |= HAL_KEY_JOY_MOVE_IENBIT;
     HAL_KEY_JOY_MOVE_PXIFG = ~(HAL_KEY_JOY_MOVE_BIT);
+#endif
 
 
     /* Do this only after the hal_key is configured - to work with sleep stuff */
@@ -300,10 +313,12 @@ uint8 HalKeyRead ( void )
     keys |= HAL_KEY_SW_6;
   }
 
+#ifndef HAL_KEY_JOY_DISABLE
   if ((HAL_KEY_JOY_MOVE_PORT & HAL_KEY_JOY_MOVE_BIT))  /* Key is active low */
   {
     keys |= halGetJoyKeyInput();
   }
+#endif
 
   return keys;
 }
@@ -322,10 +337,12 @@ void HalKeyPoll (void)
 {
   uint8 keys = 0;
 
+#ifndef HAL_KEY_JOY_DISABLE
   if ((HAL_KEY_JOY_MOVE_PORT & HAL_KEY_JOY_MOVE_BIT))  /* Key is active HIGH */
   {
     keys = halGetJoyKeyInput();
   }
+#endif
 
   /* If interrupts are not enabled, previous key status and current key status
    * are compared to find out if a key has changed status.
@@ -435,11 +452,13 @@ void halProcessKeyInterrupt (void)
     valid = TRUE;
   }
 
+#ifndef HAL_KEY_JOY_DISABLE
   if (HAL_KEY_JOY_MOVE_PXIFG & HAL_KEY_JOY_MOVE_BIT)  /* Interrupt Flag has been set */
   {
     HAL_KEY_JOY_MOVE_PXIFG = ~(HAL_KEY_JOY_MOVE_BIT); /* Clear Interrupt Flag */
     valid = TRUE;
   }
+#endif
 
   if (valid)
   {
@@ -522,10 +541,12 @@ HAL_ISR_FUNCTION( halKeyPort2Isr, P2INT_VECTOR )
 {
   HAL_ENTER_ISR();
   
+#ifndef HAL_KEY_JOY_DISABLE
   if (HAL_KEY_JOY_MOVE_PXIFG & HAL_KEY_JOY_MOVE_BIT)
   {
     halProcessKeyInterrupt();
   }
+#endif
 
   /*
     Clear the CPU interrupt flag for Port_2
