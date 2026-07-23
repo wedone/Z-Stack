@@ -71,8 +71,11 @@ extern "C"
 #define SAMPLEAPP_END_DEVICE_REJOIN_EVT   0x0001
 
 // UI Events
-#define SAMPLEAPP_LCD_AUTO_UPDATE_EVT       0x0010  
-#define SAMPLEAPP_KEY_AUTO_REPEAT_EVT       0x0020  
+#define SAMPLEAPP_LCD_AUTO_UPDATE_EVT       0x0010
+#define SAMPLEAPP_KEY_AUTO_REPEAT_EVT       0x0020
+
+// 触摸输入轮询事件 (100ms周期, 带软件防抖)
+#define SAMPLESW_TOUCH_POLL_EVT             0x0004
 
 #define SAMPLEAPP_END_DEVICE_REJOIN_DELAY 10000
 
@@ -124,6 +127,27 @@ extern UINT16 zclSampleSw_event_loop( byte task_id, UINT16 events );
  *  Reset all writable attributes to their default values.
  */
 extern void zclSampleSw_ResetAttributesToDefaultValues(void); //implemented in zcl_samplesw_data.c
+
+/*
+ *  初始化继电器/LED/触摸引脚的GPIO配置
+ */
+extern void zclSampleSw_InitGpio(void);
+
+/*
+ *  根据zclSampleSw_RelayState[idx]更新指定通道的继电器GPIO和LED状态
+ *  idx: 0~3 对应 EP1~EP4
+ */
+extern void zclSampleSw_UpdateRelayOutput(uint8 idx);
+
+/*
+ *  更新所有4路继电器的GPIO和LED输出
+ */
+extern void zclSampleSw_UpdateAllRelayOutputs(void);
+
+/*
+ *  处理触摸输入轮询 (100ms周期调用, 内含软件防抖)
+ */
+extern void zclSampleSw_ProcessTouchPoll(void);
 
 /*********************************************************************
 *********************************************************************/

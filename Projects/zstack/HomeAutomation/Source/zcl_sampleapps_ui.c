@@ -366,9 +366,20 @@ enum
 
 #define UI_LED_DEVICE_STATE_FLASH_TIME 4000
 
-#define UI_LED_DEVICE_STATE       HAL_LED_2
-#define UI_LED_IDENTIFY           HAL_LED_3
-#define UI_LED_NETWORK_OPEN_STATE HAL_LED_4
+/*
+ * 86四路智能开关: LED1-4(P0_0~P0_3)全部作为继电器状态指示灯(反逻辑)。
+ * 启用 SAMPLESW_RELAY_LED_MODE 后, UI系统不占用任何LED,
+ * 所有 HalLedBlink/HalLedSet 调用对 leds=0 无操作(HalLedSet 内部 while(leds) 不执行)。
+ */
+#ifdef SAMPLESW_RELAY_LED_MODE
+  #define UI_LED_DEVICE_STATE       0
+  #define UI_LED_IDENTIFY           0
+  #define UI_LED_NETWORK_OPEN_STATE 0
+#else
+  #define UI_LED_DEVICE_STATE       HAL_LED_2
+  #define UI_LED_IDENTIFY           HAL_LED_3
+  #define UI_LED_NETWORK_OPEN_STATE HAL_LED_4
+#endif
 
 #define NWK_OPEN_FOR_JOINING 0x1
 #define NWK_OPEN_TOUCHLINK_AS_TARGET 0x2

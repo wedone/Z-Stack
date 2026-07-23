@@ -154,6 +154,31 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
 #endif
 
 #define SAMPLESW_TOGGLE_TEST_EVT   0x1000
+
+/* ============================================================
+ * 86四路智能开关硬件引脚映射 (参见 4路智能开关_Zigbee固件开发方案.md)
+ *   继电器1~4 (低电平触发吸合): P1_0, P1_2, P1_6, P2_0
+ *   LED1~4    (反逻辑, ACTIVE_LOW: 写0=亮, 写1=灭): P0_0~P0_3
+ *   触摸1~4   (WTC6106BSI输出, 低电平=触摸中): P0_4~P0_7
+ *   S1配网按键 (低电平有效): P1_3
+ * LED与继电器联动: 继电器OFF→LED亮(写0), 继电器ON→LED灭(写1)
+ * ============================================================ */
+#define TOUCH_POLL_INTERVAL_MS    100       // 触摸轮询周期
+#define TOUCH_DEBOUNCE_COUNTS     2        // 连续2次(200ms)确认状态变化, 防抖
+
+// 继电器引脚位掩码 (P1口: P1_0/P1_2/P1_6, P2口: P2_0)
+#define RELAY_P1_BV               (BV(0) | BV(2) | BV(6))
+#define RELAY_P2_BV               (BV(0))
+// 触摸输入引脚位掩码 (P0_4~P0_7)
+#define TOUCH_INPUT_BV            (BV(4) | BV(5) | BV(6) | BV(7))
+
+// 触摸防抖状态 (bit i 对应通道 i: 0=稳定未触摸, 1=稳定触摸中)
+static uint8 touchStableState = 0;
+static uint8 touchDebounce[4] = {0, 0, 0, 0};   // 各通道防抖计数器
+static uint8 touchPending[4]  = {0, 0, 0, 0};   // 各通道待确认的新电平
+// 上电时P0_4~P0_7的初始电平, 作为"未触摸"基准。
+// WTC6106BSI系列初始电平可选(高/低), 故不预设极性, 偏离基准即视为触摸。
+static uint8 touchBaseline = 0xFF;
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
@@ -161,6 +186,11 @@ static void zclSampleSw_HandleKeys( byte shift, byte keys );
 static void zclSampleSw_BasicResetCB( void );
 
 static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bdbCommissioningModeMsg);
+
+// 86开关: 继电器/触摸/OnOff回调内部实现
+static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd);
+static void zclSampleSw_ToggleRelay(uint8 idx);
+static uint8 zclSampleSw_ReadTouchInputs(void);
 
 
 // Functions to process ZCL Foundation incoming Command/Response messages
@@ -238,6 +268,35 @@ static zclGeneral_AppCallbacks_t zclSampleSw_CmdCallbacks =
   NULL                                    // RSSI Location Response command
 };
 
+/* 86开关: 为4路继电器端点(EP1~EP4)生成独立的OnOff回调与callbacks表。
+ * ZCL按endpoint查找callbacks后调用pfnOnOff(cmd), 签名不传endpoint,
+ * 故每个端点需独立的回调函数以记录目标继电器索引。
+ * 字段顺序须与上面 zclSampleSw_CmdCallbacks 一致 (当前项目定义:
+ * ZCL_BASIC/ZCL_IDENTIFY/ZCL_ON_OFF/ZCL_GROUPS, 未定义 ZCL_LEVEL_CTRL/
+ * ZCL_SCENES/ZCL_ALARMS/SE_UK_EXT, 故结构体共9个字段)。 */
+#define DEFINE_RELAY_ONOFF_CB(IDX, EP)                                  \
+  static void zclSampleSw_OnOffCB_ep##EP(uint8 cmd)                     \
+  {                                                                      \
+    zclSampleSw_HandleOnOffCmd((IDX), cmd);                              \
+  }                                                                      \
+  static zclGeneral_AppCallbacks_t zclSampleSw_CmdCallbacks_ep##EP =    \
+  {                                                                      \
+    zclSampleSw_BasicResetCB,   /* pfnBasicReset */                     \
+    NULL,                       /* pfnIdentifyTriggerEffect */          \
+    zclSampleSw_OnOffCB_ep##EP, /* pfnOnOff */                         \
+    NULL,                       /* pfnOnOff_OffWithEffect */            \
+    NULL,                       /* pfnOnOff_OnWithRecallGlobalScene */ \
+    NULL,                       /* pfnOnOff_OnWithTimedOff */          \
+    NULL,                       /* pfnGroupRsp (ZCL_GROUPS) */          \
+    NULL,                       /* pfnLocation */                       \
+    NULL                        /* pfnLocationRsp */                   \
+  };
+
+DEFINE_RELAY_ONOFF_CB(0, 1)
+DEFINE_RELAY_ONOFF_CB(1, 2)
+DEFINE_RELAY_ONOFF_CB(2, 3)
+DEFINE_RELAY_ONOFF_CB(3, 4)
+
 /*********************************************************************
  * @fn          zclSampleSw_Init
  *
@@ -282,18 +341,32 @@ void zclSampleSw_Init( byte task_id )
   afRegister( &sampleSw_TestEp );
 
   // 注册4路继电器端点 (EP 1-4, 对应 alab.switch l1-l4)
+  // 每个端点注册独立的callbacks, 使OnOff命令能定位到正确的继电器索引
   {
     uint8 ep;
+    static zclGeneral_AppCallbacks_t* relayCBs[SAMPLESW_NUM_RELAYS] = {
+      &zclSampleSw_CmdCallbacks_ep1,
+      &zclSampleSw_CmdCallbacks_ep2,
+      &zclSampleSw_CmdCallbacks_ep3,
+      &zclSampleSw_CmdCallbacks_ep4,
+    };
     for (ep = 0; ep < SAMPLESW_NUM_RELAYS; ep++)
     {
       bdb_RegisterSimpleDescriptor(&zclSampleSw_RelaySimpleDesc[ep]);
-      zclGeneral_RegisterCmdCallbacks(zclSampleSw_RelaySimpleDesc[ep].EndPoint, &zclSampleSw_CmdCallbacks);
+      zclGeneral_RegisterCmdCallbacks(zclSampleSw_RelaySimpleDesc[ep].EndPoint, relayCBs[ep]);
     }
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY1, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep1);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY2, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep2);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY3, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep3);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY4, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep4);
   }
+
+  // 86开关: 初始化继电器/LED/触摸GPIO, 并根据zclSampleSw_RelayState应用初始输出
+  zclSampleSw_InitGpio();
+  zclSampleSw_UpdateAllRelayOutputs();
+
+  // 86开关: 启动触摸输入轮询 (100ms周期, 内含软件防抖)
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
   
 #ifdef ZCL_DIAGNOSTIC
   // Register the application's callback function to read/write attribute data.
@@ -360,6 +433,9 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
 
         case ZDO_STATE_CHANGE:
           UI_DeviceStateUpdated((devStates_t)(MSGpkt->hdr.status));
+          // 86开关: 协议栈Router启动时会操作LED3/LED4(ZDApp.c), 覆盖继电器状态灯。
+          // 入网状态变化后重新刷新所有继电器/LED输出, 恢复正确显示。
+          zclSampleSw_UpdateAllRelayOutputs();
           break;
 
 #if defined (OTA_CLIENT) && (OTA_CLIENT == TRUE)
@@ -399,6 +475,14 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
     UI_MainStateMachine(UI_KEY_AUTO_PRESSED);
     return ( events ^ SAMPLEAPP_KEY_AUTO_REPEAT_EVT );
   }
+
+  // 86开关: 触摸输入轮询事件 (100ms周期, 内含软件防抖)
+  if ( events & SAMPLESW_TOUCH_POLL_EVT )
+  {
+    zclSampleSw_ProcessTouchPoll();
+    return ( events ^ SAMPLESW_TOUCH_POLL_EVT );
+  }
+
   // Discard unknown events
   return 0;
 }
@@ -420,6 +504,206 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
 static void zclSampleSw_HandleKeys( byte shift, byte keys )
 {
   UI_MainStateMachine(keys);
+}
+
+/* ============================================================
+ * 86四路智能开关: 继电器/LED/触摸输入实现
+ * ============================================================ */
+
+/*********************************************************************
+ * @fn      zclSampleSw_InitGpio
+ *
+ * @brief   初始化继电器/LED/触摸引脚的GPIO方向与初始电平
+ *          继电器(P1_0/P1_2/P1_6/P2_0): 输出, 默认高电平(继电器断开)
+ *          LED(P0_0~P0_3): 已由HalLedInit配置为输出, 这里同步为继电器状态
+ *          触摸(P0_4~P0_7): 输入, 上拉(CC2530 P0口默认上拉)
+ * @return  none
+ */
+void zclSampleSw_InitGpio(void)
+{
+  // 继电器引脚设为GPIO功能并配置为输出
+  P1SEL &= ~RELAY_P1_BV;        // P1_0/P1_2/P1_6 选为GPIO
+  P2SEL &= ~RELAY_P2_BV;        // P2_0 选为GPIO
+  P1DIR |= RELAY_P1_BV;         // 设为输出
+  P2DIR |= RELAY_P2_BV;         // 设为输出
+
+  // 触摸输入引脚设为GPIO功能并配置为输入(默认上拉)
+  P0SEL &= ~TOUCH_INPUT_BV;     // P0_4~P0_7 选为GPIO
+  P0DIR &= ~TOUCH_INPUT_BV;     // 设为输入
+
+  // 采样上电初始电平作为"未触摸"基准。
+  // WTC6106BSI初始电平可选(高/低), 不预设极性, 偏离基准即视为触摸。
+  // 延时一小段让引脚电平稳定后读取。
+  HAL_LED_BLINK_DELAY();
+  touchBaseline = P0 & TOUCH_INPUT_BV;
+  touchStableState = 0;
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_UpdateRelayOutput
+ *
+ * @brief   根据zclSampleSw_RelayState[idx]更新指定通道的继电器GPIO和LED状态
+ *          继电器: ON=低电平触发吸合, OFF=高电平断开
+ *          LED反逻辑: 继电器OFF→LED亮(写0), 继电器ON→LED灭(写1)
+ * @param   idx - 继电器索引 0~3
+ * @return  none
+ */
+void zclSampleSw_UpdateRelayOutput(uint8 idx)
+{
+  uint8 on = zclSampleSw_RelayState[idx];
+  uint8 ledVal = on ? 1 : 0;    // 反逻辑: 继电器ON→LED灭(写1), OFF→LED亮(写0)
+
+  switch (idx)
+  {
+    case 0:
+      P1_0 = on ? 0 : 1;        // 继电器1: ON=低电平
+      P0_0 = ledVal;            // LED1
+      break;
+    case 1:
+      P1_2 = on ? 0 : 1;        // 继电器2
+      P0_1 = ledVal;            // LED2
+      break;
+    case 2:
+      P1_6 = on ? 0 : 1;        // 继电器3
+      P0_2 = ledVal;            // LED3
+      break;
+    case 3:
+      P2_0 = on ? 0 : 1;        // 继电器4
+      P0_3 = ledVal;            // LED4
+      break;
+    default:
+      break;
+  }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_UpdateAllRelayOutputs
+ * @brief   更新所有4路继电器的GPIO和LED输出
+ * @return  none
+ */
+void zclSampleSw_UpdateAllRelayOutputs(void)
+{
+  uint8 i;
+  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+  {
+    zclSampleSw_UpdateRelayOutput(i);
+  }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ToggleRelay
+ * @brief   翻转指定通道继电器状态并更新GPIO输出
+ * @param   idx - 继电器索引 0~3
+ * @return  none
+ */
+static void zclSampleSw_ToggleRelay(uint8 idx)
+{
+  zclSampleSw_RelayState[idx] = !zclSampleSw_RelayState[idx];
+  zclSampleSw_UpdateRelayOutput(idx);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_HandleOnOffCmd
+ * @brief   处理ZCL On/Off/Toggle命令, 更新继电器状态和GPIO
+ * @param   idx - 继电器索引 0~3
+ * @param   cmd - ZCL命令ID (COMMAND_ON / COMMAND_OFF / COMMAND_TOGGLE)
+ * @return  none
+ */
+static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd)
+{
+  switch (cmd)
+  {
+    case COMMAND_ON:
+      zclSampleSw_RelayState[idx] = TRUE;
+      break;
+    case COMMAND_OFF:
+      zclSampleSw_RelayState[idx] = FALSE;
+      break;
+    case COMMAND_TOGGLE:
+      zclSampleSw_RelayState[idx] = !zclSampleSw_RelayState[idx];
+      break;
+    default:
+      return;
+  }
+  zclSampleSw_UpdateRelayOutput(idx);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ReadTouchInputs
+ * @brief   读取P0_4~P0_7触摸输入, 与上电基准比较判断触摸状态
+ *          WTC6106BSI初始电平可选(高/低), 故以"偏离基准"作为触摸判据,
+ *          不假设触摸时输出高还是低, 自适应两种极性配置。
+ * @return  触摸状态位图 (bit i = 通道i: 1=触摸中, 0=未触摸)
+ */
+static uint8 zclSampleSw_ReadTouchInputs(void)
+{
+  uint8 port = P0;
+  uint8 val = 0;
+  if ((port & BV(4)) != (touchBaseline & BV(4))) val |= BV(0);  // 通道1偏离基准=触摸
+  if ((port & BV(5)) != (touchBaseline & BV(5))) val |= BV(1);  // 通道2
+  if ((port & BV(6)) != (touchBaseline & BV(6))) val |= BV(2);  // 通道3
+  if ((port & BV(7)) != (touchBaseline & BV(7))) val |= BV(3);  // 通道4
+  return val;
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ProcessTouchPoll
+ * @brief   触摸输入轮询处理, 包含软件防抖状态机
+ *          检测到电平变化后需连续 TOUCH_DEBOUNCE_COUNTS 次(200ms)确认,
+ *          仅在下降沿(未触摸→触摸)触发一次继电器翻转, 长按不重复触发。
+ *          处理后重新启动下一次轮询定时器。
+ * @return  none
+ */
+void zclSampleSw_ProcessTouchPoll(void)
+{
+  uint8 cur = zclSampleSw_ReadTouchInputs();
+  uint8 i;
+
+  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+  {
+    uint8 curBit    = (cur >> i) & 1;
+    uint8 stableBit = (touchStableState >> i) & 1;
+
+    if (curBit != stableBit)
+    {
+      // 当前电平与稳定状态不同, 累加防抖计数
+      if (touchPending[i] != curBit)
+      {
+        touchPending[i] = curBit;
+        touchDebounce[i] = 1;
+      }
+      else
+      {
+        touchDebounce[i]++;
+      }
+
+      // 连续确认达到阈值, 更新稳定状态
+      if (touchDebounce[i] >= TOUCH_DEBOUNCE_COUNTS)
+      {
+        // 翻转稳定状态位
+        if (curBit)
+        {
+          touchStableState |= BV(i);
+          // 下降沿确认(高→低, 即从未触摸变为触摸), 触发继电器翻转
+          zclSampleSw_ToggleRelay(i);
+        }
+        else
+        {
+          touchStableState &= ~BV(i);
+        }
+        touchDebounce[i] = 0;
+      }
+    }
+    else
+    {
+      // 电平与稳定状态一致, 重置防抖
+      touchDebounce[i] = 0;
+      touchPending[i] = stableBit;
+    }
+  }
+
+  // 重新启动下一次轮询
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
 }
 
 
