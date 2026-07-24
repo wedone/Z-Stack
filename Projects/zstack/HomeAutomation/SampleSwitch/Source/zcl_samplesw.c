@@ -176,9 +176,6 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
 static uint8 touchStableState = 0;
 static uint8 touchDebounce[4] = {0, 0, 0, 0};   // 各通道防抖计数器
 static uint8 touchPending[4]  = {0, 0, 0, 0};   // 各通道待确认的新电平
-// 上电时P0_4~P0_7的初始电平, 作为"未触摸"基准。
-// WTC6106BSI系列初始电平可选(高/低), 故不预设极性, 偏离基准即视为触摸。
-static uint8 touchBaseline = 0xFF;
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
@@ -191,6 +188,7 @@ static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bd
 static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
+static void zclSampleSw_ReportOnOffState(uint8 idx);
 
 
 // Functions to process ZCL Foundation incoming Command/Response messages
@@ -528,14 +526,10 @@ void zclSampleSw_InitGpio(void)
   P2DIR |= RELAY_P2_BV;         // 设为输出
 
   // 触摸输入引脚设为GPIO功能并配置为输入(默认上拉)
+  // WTC6106BSI: 未触摸=高电平, 触摸=低电平(开漏输出, 需上拉)
   P0SEL &= ~TOUCH_INPUT_BV;     // P0_4~P0_7 选为GPIO
   P0DIR &= ~TOUCH_INPUT_BV;     // 设为输入
 
-  // 采样上电初始电平作为"未触摸"基准。
-  // WTC6106BSI初始电平可选(高/低), 不预设极性, 偏离基准即视为触摸。
-  // 延时一小段让引脚电平稳定后读取。
-  HAL_LED_BLINK_DELAY();
-  touchBaseline = P0 & TOUCH_INPUT_BV;
   touchStableState = 0;
 }
 
@@ -592,7 +586,7 @@ void zclSampleSw_UpdateAllRelayOutputs(void)
 
 /*********************************************************************
  * @fn      zclSampleSw_ToggleRelay
- * @brief   翻转指定通道继电器状态并更新GPIO输出
+ * @brief   翻转指定通道继电器状态并更新GPIO输出, 并向协调器上报新状态
  * @param   idx - 继电器索引 0~3
  * @return  none
  */
@@ -600,6 +594,7 @@ static void zclSampleSw_ToggleRelay(uint8 idx)
 {
   zclSampleSw_RelayState[idx] = !zclSampleSw_RelayState[idx];
   zclSampleSw_UpdateRelayOutput(idx);
+  zclSampleSw_ReportOnOffState(idx);
 }
 
 /*********************************************************************
@@ -626,23 +621,63 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd)
       return;
   }
   zclSampleSw_UpdateRelayOutput(idx);
+  zclSampleSw_ReportOnOffState(idx);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ReportOnOffState
+ * @brief   向协调器上报指定通道继电器的OnOff属性状态(ZCL Report Attributes)
+ *          触摸翻转或ZCL命令处理后调用, 确保z2m状态同步
+ * @param   idx - 继电器索引 0~3
+ * @return  none
+ */
+static void zclSampleSw_ReportOnOffState(uint8 idx)
+{
+  uint8 ep;
+  zclReportCmd_t *reportCmd;
+  zclReport_t *reportRec;
+
+  switch (idx)
+  {
+    case 0:  ep = SAMPLESW_ENDPOINT_RELAY1; break;
+    case 1:  ep = SAMPLESW_ENDPOINT_RELAY2; break;
+    case 2:  ep = SAMPLESW_ENDPOINT_RELAY3; break;
+    case 3:  ep = SAMPLESW_ENDPOINT_RELAY4; break;
+    default: return;
+  }
+
+  reportCmd = (zclReportCmd_t *)osal_msg_allocate(sizeof(zclReportCmd_t) + sizeof(zclReport_t));
+  if (reportCmd == NULL) return;
+
+  reportCmd->numAttr = 1;
+  reportRec = &(reportCmd->attrList[0]);
+  reportRec->attrID = ATTRID_ON_OFF;
+  reportRec->dataType = ZCL_DATATYPE_BOOLEAN;
+  reportRec->attrData = &zclSampleSw_RelayState[idx];
+
+  zclSampleSw_DstAddr.addrMode = (afAddrMode_t)Addr16Bit;
+  zclSampleSw_DstAddr.addr.shortAddr = 0;  // 协调器
+  zclSampleSw_DstAddr.endPoint = 1;
+
+  zcl_SendReportCmd(ep, &zclSampleSw_DstAddr, ZCL_CLUSTER_ID_GEN_ON_OFF,
+                    reportCmd, ZCL_FRAME_SERVER_CLIENT_DIR, TRUE, zclSampleSwSeqNum++);
+
+  osal_msg_deallocate((uint8 *)reportCmd);
 }
 
 /*********************************************************************
  * @fn      zclSampleSw_ReadTouchInputs
- * @brief   读取P0_4~P0_7触摸输入, 与上电基准比较判断触摸状态
- *          WTC6106BSI初始电平可选(高/低), 故以"偏离基准"作为触摸判据,
- *          不假设触摸时输出高还是低, 自适应两种极性配置。
+ * @brief   读取P0_4~P0_7触摸输入, 低电平=触摸中(WTC6106BSI输出极性固定)
  * @return  触摸状态位图 (bit i = 通道i: 1=触摸中, 0=未触摸)
  */
 static uint8 zclSampleSw_ReadTouchInputs(void)
 {
   uint8 port = P0;
   uint8 val = 0;
-  if ((port & BV(4)) != (touchBaseline & BV(4))) val |= BV(0);  // 通道1偏离基准=触摸
-  if ((port & BV(5)) != (touchBaseline & BV(5))) val |= BV(1);  // 通道2
-  if ((port & BV(6)) != (touchBaseline & BV(6))) val |= BV(2);  // 通道3
-  if ((port & BV(7)) != (touchBaseline & BV(7))) val |= BV(3);  // 通道4
+  if (!(port & BV(4))) val |= BV(0);  // 通道1: P0_4=低=触摸
+  if (!(port & BV(5))) val |= BV(1);  // 通道2: P0_5
+  if (!(port & BV(6))) val |= BV(2);  // 通道3: P0_6
+  if (!(port & BV(7))) val |= BV(3);  // 通道4: P0_7
   return val;
 }
 
@@ -680,7 +715,6 @@ void zclSampleSw_ProcessTouchPoll(void)
       // 连续确认达到阈值, 更新稳定状态
       if (touchDebounce[i] >= TOUCH_DEBOUNCE_COUNTS)
       {
-        // 翻转稳定状态位
         if (curBit)
         {
           touchStableState |= BV(i);
