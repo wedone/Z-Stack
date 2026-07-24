@@ -68,6 +68,7 @@
  */
 #include "ZComDef.h"
 #include "OSAL.h"
+#include "OSAL_Nv.h"
 #include "AF.h"
 #include "ZDApp.h"
 #include "ZDObject.h"
@@ -188,6 +189,10 @@ static uint8 touchDebounce[4] = {0, 0, 0, 0};   // 各通道防抖计数器
 static uint8 touchPending[4]  = {0, 0, 0, 0};   // 各通道待确认的新电平
 // S1长按复位计数器 (每次触摸轮询+1, 达到S1_RESET_THRESHOLD执行复位)
 static uint8 s1HoldCount = 0;
+
+// 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改)
+static uint8 startupOnOffCached = STARTUP_ONOFF_PREVIOUS;
+
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
@@ -202,6 +207,12 @@ static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
 static void zclSampleSw_ReportInputState(uint8 idx);
+
+// 断电记忆: NV存储相关函数
+static void zclSampleSw_NvInit(void);
+static void zclSampleSw_NvLoadPowerOnState(void);
+static void zclSampleSw_NvScheduleSave(void);
+static void zclSampleSw_NvProcessSave(void);
 
 
 // Functions to process ZCL Foundation incoming Command/Response messages
@@ -385,6 +396,11 @@ void zclSampleSw_Init( byte task_id )
     zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT4, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep8);
   }
 
+  // 断电记忆: 初始化NV项, 并按startUpOnOff策略恢复断电前继电器状态
+  // 必须在UpdateAllRelayOutputs()之前调用, 确保GPIO输出与恢复后的状态一致
+  zclSampleSw_NvInit();
+  zclSampleSw_NvLoadPowerOnState();
+
   // 86开关: 初始化继电器/LED/触摸GPIO, 并根据zclSampleSw_RelayState应用初始输出
   zclSampleSw_InitGpio();
   zclSampleSw_UpdateAllRelayOutputs();
@@ -507,6 +523,13 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
     return ( events ^ SAMPLESW_TOUCH_POLL_EVT );
   }
 
+  // 断电记忆: 延迟写入NV事件 (5秒到期, 执行Compare-Before-Write)
+  if ( events & SAMPLESW_NV_SAVE_EVT )
+  {
+    zclSampleSw_NvProcessSave();
+    return ( events ^ SAMPLESW_NV_SAVE_EVT );
+  }
+
   // Discard unknown events
   return 0;
 }
@@ -610,6 +633,139 @@ void zclSampleSw_UpdateAllRelayOutputs(void)
   }
 }
 
+/* ============================================================
+ * 断电记忆 (Power-On State Recovery) 实现
+ *
+ * 业界Flash寿命优化标准做法:
+ *   1. 延迟写入 (Write Coalescing): 状态变化后不立即写Flash,
+ *      启动定时器(5秒), 期间若有新变化则继续等待, 到期后一次性写入,
+ *      把多次变化合并为1次Flash写操作。
+ *   2. 对比写入 (Compare-Before-Write): 写入前对比RAM与NV中的值,
+ *      相同则跳过Flash写, 避免无意义擦写。
+ *   3. Z-Stack OSAL NV驱动内部已实现磨损均衡与冗余页机制。
+ *
+ * 数据布局:
+ *   SAMPLESW_NV_ID_RELAY_STATE   (0x0F10): 4字节, 4路继电器状态
+ *   SAMPLESW_NV_ID_STARTUP_ONOFF (0x0F11): 1字节, startUpOnOff配置
+ *
+ * 开关控制: Z2M通过读写startUpOnOff属性(0x4003)控制断电记忆行为
+ *   0x00=上电OFF, 0x01=上电ON, 0x02=上电TOGGLE, 0xFF=恢复断电前状态
+ * ============================================================ */
+
+/*********************************************************************
+ * @fn      zclSampleSw_NvInit
+ * @brief   初始化断电记忆NV存储项 (若不存在则用默认值创建)
+ * @return  none
+ */
+static void zclSampleSw_NvInit(void)
+{
+  uint8 defaultRelayState[SAMPLESW_NUM_RELAYS] = {FALSE, FALSE, FALSE, FALSE};
+  uint8 defaultStartupOnOff = STARTUP_ONOFF_PREVIOUS;
+
+  // osal_nv_item_init: 若NV项已存在则不做改动, 不存在则用默认值创建
+  osal_nv_item_init(SAMPLESW_NV_ID_RELAY_STATE, SAMPLESW_NUM_RELAYS, defaultRelayState);
+  osal_nv_item_init(SAMPLESW_NV_ID_STARTUP_ONOFF, 1, &defaultStartupOnOff);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_NvLoadPowerOnState
+ * @brief   上电时从NV读取配置和断电前状态, 按startUpOnOff策略恢复继电器
+ *          必须在zclSampleSw_UpdateAllRelayOutputs()之前调用
+ * @return  none
+ */
+static void zclSampleSw_NvLoadPowerOnState(void)
+{
+  uint8 savedRelayState[SAMPLESW_NUM_RELAYS];
+  uint8 i;
+
+  // 读取startUpOnOff配置
+  if (osal_nv_read(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &zclSampleSw_StartUpOnOff) != SUCCESS)
+  {
+    // NV读取失败, 保持编译时默认值
+    zclSampleSw_StartUpOnOff = STARTUP_ONOFF_PREVIOUS;
+  }
+  startupOnOffCached = zclSampleSw_StartUpOnOff;
+
+  // 读取断电前继电器状态
+  if (osal_nv_read(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, savedRelayState) != SUCCESS)
+  {
+    // NV读取失败, 保持全OFF默认值
+    return;
+  }
+
+  // 按startUpOnOff策略设置上电继电器状态
+  switch (zclSampleSw_StartUpOnOff)
+  {
+    case STARTUP_ONOFF_OFF:
+      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        zclSampleSw_RelayState[i] = FALSE;
+      break;
+    case STARTUP_ONOFF_ON:
+      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        zclSampleSw_RelayState[i] = TRUE;
+      break;
+    case STARTUP_ONOFF_TOGGLE:
+      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        zclSampleSw_RelayState[i] = !savedRelayState[i];
+      break;
+    case STARTUP_ONOFF_PREVIOUS:
+    default:
+      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        zclSampleSw_RelayState[i] = savedRelayState[i];
+      break;
+  }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_NvScheduleSave
+ * @brief   调度延迟写入NV (5秒后执行, 期间新调用会重置定时器)
+ *          实现Write Coalescing: 多次状态变化合并为1次Flash写
+ * @return  none
+ */
+static void zclSampleSw_NvScheduleSave(void)
+{
+  // 启动/重启延迟写入定时器
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_NV_SAVE_EVT, SAMPLESW_NV_SAVE_DELAY_MS);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_NvProcessSave
+ * @brief   延迟写入定时器到期处理: 对比RAM与NV值, 不同才写入 (Compare-Before-Write)
+ * @return  none
+ */
+static void zclSampleSw_NvProcessSave(void)
+{
+  uint8 savedRelayState[SAMPLESW_NUM_RELAYS];
+  uint8 savedStartupOnOff;
+
+  // 1. 对比并写入继电器状态
+  if (osal_nv_read(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, savedRelayState) == SUCCESS)
+  {
+    if (osal_memcmp(savedRelayState, zclSampleSw_RelayState, SAMPLESW_NUM_RELAYS) == FALSE)
+    {
+      osal_nv_write(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, zclSampleSw_RelayState);
+    }
+  }
+  else
+  {
+    // NV项不存在, 直接写入
+    osal_nv_write(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, zclSampleSw_RelayState);
+  }
+
+  // 2. 对比并写入startUpOnOff配置
+  if (osal_nv_read(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &savedStartupOnOff) == SUCCESS)
+  {
+    if (savedStartupOnOff != zclSampleSw_StartUpOnOff)
+    {
+      osal_nv_write(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &zclSampleSw_StartUpOnOff);
+    }
+  }
+  else
+  {
+    osal_nv_write(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &zclSampleSw_StartUpOnOff);
+  }
+}
+
 /*********************************************************************
  * @fn      zclSampleSw_ToggleRelay
  * @brief   翻转指定通道继电器状态并更新GPIO输出, 并向协调器上报新状态
@@ -621,6 +777,8 @@ static void zclSampleSw_ToggleRelay(uint8 idx)
   zclSampleSw_RelayState[idx] = !zclSampleSw_RelayState[idx];
   zclSampleSw_UpdateRelayOutput(idx);
   zclSampleSw_ReportOnOffState(idx);
+  // 断电记忆: 调度延迟写入 (5秒后合并写入NV)
+  zclSampleSw_NvScheduleSave();
 }
 
 /*********************************************************************
@@ -648,6 +806,8 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd)
   }
   zclSampleSw_UpdateRelayOutput(idx);
   zclSampleSw_ReportOnOffState(idx);
+  // 断电记忆: 调度延迟写入 (5秒后合并写入NV)
+  zclSampleSw_NvScheduleSave();
 }
 
 /*********************************************************************
@@ -823,6 +983,14 @@ void zclSampleSw_ProcessTouchPoll(void)
   else
   {
     s1HoldCount = 0;
+  }
+
+  // 断电记忆: 检测Z2M远程修改的startUpOnOff属性 (100ms周期轮询)
+  // 若发现变化, 调度延迟写入NV持久化新配置
+  if (zclSampleSw_StartUpOnOff != startupOnOffCached)
+  {
+    startupOnOffCached = zclSampleSw_StartUpOnOff;
+    zclSampleSw_NvScheduleSave();
   }
 
   // 重新启动下一次轮询

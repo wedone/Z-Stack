@@ -84,6 +84,25 @@ extern "C"
 // 触摸输入轮询事件 (100ms周期, 带软件防抖)
 #define SAMPLESW_TOUCH_POLL_EVT             0x0004
 
+// 断电记忆: 延迟写入NV事件 (状态变化后5秒写入, 减少Flash磨损)
+#define SAMPLESW_NV_SAVE_EVT                0x0008
+
+// NV存储项ID (应用自定义, 避开Z-Stack系统区0x0001~0x0097和ZNP保留区0x0F01~0x0F07)
+#define SAMPLESW_NV_ID_RELAY_STATE          0x0F10  // 4路继电器状态
+#define SAMPLESW_NV_ID_STARTUP_ONOFF        0x0F11  // startUpOnOff配置
+
+// startUpOnOff属性值 (ZCL标准)
+#define STARTUP_ONOFF_OFF                   0x00    // 上电关闭
+#define STARTUP_ONOFF_ON                    0x01    // 上电开启
+#define STARTUP_ONOFF_TOGGLE                0x02    // 上电切换
+#define STARTUP_ONOFF_PREVIOUS              0xFF    // 恢复断电前状态(断电记忆)
+
+// 延迟写入时间 (ms), 状态变化后等待此时间无新变化才写入NV
+#define SAMPLESW_NV_SAVE_DELAY_MS           5000
+
+// ZCL属性ID: startUpOnOff (genOnOff cluster, 非标准定义需自定义)
+#define ATTRID_STARTUP_ON_OFF               0x4003
+
 #define SAMPLEAPP_END_DEVICE_REJOIN_DELAY 10000
 
 /*********************************************************************
@@ -107,6 +126,9 @@ extern SimpleDescriptionFormat_t zclSampleSw_InputSimpleDesc[SAMPLESW_NUM_INPUTS
 extern CONST zclAttrRec_t zclSampleSw_Attrs[];
 
 extern uint8 zclSampleSw_RelayState[SAMPLESW_NUM_RELAYS];
+
+// 断电记忆: startUpOnOff配置 (4路共用, 默认恢复之前状态)
+extern uint8 zclSampleSw_StartUpOnOff;
 
 extern float zclSampleSw_InputState[SAMPLESW_NUM_INPUTS];
 

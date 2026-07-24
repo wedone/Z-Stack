@@ -4,6 +4,31 @@
 
 ---
 
+## v0.2.0 - 2026-07-25
+
+新增断电记忆功能，设备断电后可恢复之前的继电器状态。换壳到 HGZB-4S 以获得 Z2M 内置 powerOnBehavior 支持，免 External Converter。
+
+### Added
+- 断电记忆功能: 基于ZCL标准startUpOnOff属性(0x4003), 支持4种上电策略(off/on/toggle/previous)
+- NV持久化存储: 继电器状态和startUpOnOff配置写入Flash, 断电不丢失
+- Flash寿命优化: 延迟写入(Write Coalescing, 5秒合并) + 对比写入(Compare-Before-Write), 避免无意义擦写
+- startUpOnOff属性变更检测: 100ms周期轮询Z2M远程修改, 自动持久化新配置
+
+### Changed
+- **换壳 alab.switch → HGZB-4S (Nue/3A)**: ModelId 改为 `LXN-4S27LX1.0`, 获得Z2M内置powerOnBehavior支持, 免External Converter
+- NV ID选型: 使用0x0F10/0x0F11, 避开Z-Stack系统区(0x0001~0x0097)和ZNP保留区(0x0F01~0x0F07)
+- 版本号递增: v0.1.2 → v0.2.0 (新增功能, 次版本号递增)
+
+### Removed
+- alab_switch_poweron.js: 换壳到HGZB-4S后无需External Converter (HGZB-4S的m.onOff默认启用powerOnBehavior)
+
+### Trade-offs
+- 换壳到HGZB-4S后, Z2M不再识别EP5-8的input_state触摸按键状态显示
+- 触摸操作仍能通过继电器状态变化反映到Z2M (触摸→继电器翻转→ZCL上报→Z2M显示开关状态变化)
+- 固件保留EP5-8端点代码, 未来可通过向Z2M上游提PR恢复input_state功能
+
+---
+
 ## v0.1.2 - 2026-07-25
 
 新增EP5-8输入状态端点(genAnalogInput)，修复z2m input_state功能。
