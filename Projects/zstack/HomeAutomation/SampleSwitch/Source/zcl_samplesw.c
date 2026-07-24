@@ -673,6 +673,7 @@ static void zclSampleSw_ReportOnOffState(uint8 idx)
 /*********************************************************************
  * @fn      zclSampleSw_ReadTouchInputs
  * @brief   读取P0_4~P0_7触摸输入, 低电平=触摸中(WTC6106BSI输出极性固定)
+ *          经诊断固件验证: WTC6106BSI未触摸=高电平, 触摸=低电平
  * @return  触摸状态位图 (bit i = 通道i: 1=触摸中, 0=未触摸)
  */
 static uint8 zclSampleSw_ReadTouchInputs(void)
@@ -690,7 +691,7 @@ static uint8 zclSampleSw_ReadTouchInputs(void)
  * @fn      zclSampleSw_ProcessTouchPoll
  * @brief   触摸输入轮询处理, 包含软件防抖状态机
  *          检测到电平变化后需连续 TOUCH_DEBOUNCE_COUNTS 次(200ms)确认,
- *          仅在下降沿(未触摸→触摸)触发一次继电器翻转, 长按不重复触发。
+ *          仅在上升沿(未触摸→触摸)触发一次继电器翻转, 长按不重复触发。
  *          同时检测S1(P1_3)长按5秒复位。
  *          处理后重新启动下一次轮询定时器。
  * @return  none
@@ -724,7 +725,7 @@ void zclSampleSw_ProcessTouchPoll(void)
         if (curBit)
         {
           touchStableState |= BV(i);
-          // 下降沿确认(高→低, 即从未触摸变为触摸), 触发继电器翻转
+          // 上升沿确认(未触摸→触摸), 触发继电器翻转
           zclSampleSw_ToggleRelay(i);
         }
         else

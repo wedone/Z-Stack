@@ -99,7 +99,7 @@ const uint8 zclSampleSw_ModelId[] = { 11, 'a','l','a','b','.','s','w','i','t','c
 // DateCode: 固件编译日期 (ZCL DateCode 属性, 格式: YYYYMMDD)
 // SwBuildId: 固件版本号 (ZCL SwBuildId 属性, 格式: vX.Y.Z)
 const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','4' };
-const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','0','.','1','.','0' };
+const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','0','.','1','.','1' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
 uint8 zclSampleSw_LocationDescription[17];
