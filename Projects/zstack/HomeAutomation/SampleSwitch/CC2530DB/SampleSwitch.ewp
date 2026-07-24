@@ -3807,6 +3807,7 @@
                     <state>OTA_CLIENT=TRUE</state>
                     <state>OTA_HA</state>
                     <state>ZCL_GROUPS</state>
+                    <state>ZCL_REPORTING_DEVICE</state>
                 </option>
                 <option>
                     <name>CCPreprocFile</name>
@@ -4967,6 +4968,7 @@
                     <state>OTA_CLIENT=TRUE</state>
                     <state>OTA_HA</state>
                     <state>ZCL_GROUPS</state>
+                    <state>ZCL_REPORTING_DEVICE</state>
                 </option>
                 <option>
                     <name>CCPreprocFile</name>
