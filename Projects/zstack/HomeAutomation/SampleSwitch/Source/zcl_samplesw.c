@@ -166,6 +166,9 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
 #define TOUCH_POLL_INTERVAL_MS    100       // 触摸轮询周期
 #define TOUCH_DEBOUNCE_COUNTS     2        // 连续2次(200ms)确认状态变化, 防抖
 
+// S1配网按键长按复位 (P1_3, 低电平有效)
+#define S1_RESET_THRESHOLD        50       // 5秒 = 50 * 100ms轮询周期
+
 // 继电器引脚位掩码 (P1口: P1_0/P1_2/P1_6, P2口: P2_0)
 #define RELAY_P1_BV               (BV(0) | BV(2) | BV(6))
 #define RELAY_P2_BV               (BV(0))
@@ -176,6 +179,8 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
 static uint8 touchStableState = 0;
 static uint8 touchDebounce[4] = {0, 0, 0, 0};   // 各通道防抖计数器
 static uint8 touchPending[4]  = {0, 0, 0, 0};   // 各通道待确认的新电平
+// S1长按复位计数器 (每次触摸轮询+1, 达到S1_RESET_THRESHOLD执行复位)
+static uint8 s1HoldCount = 0;
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
@@ -686,6 +691,7 @@ static uint8 zclSampleSw_ReadTouchInputs(void)
  * @brief   触摸输入轮询处理, 包含软件防抖状态机
  *          检测到电平变化后需连续 TOUCH_DEBOUNCE_COUNTS 次(200ms)确认,
  *          仅在下降沿(未触摸→触摸)触发一次继电器翻转, 长按不重复触发。
+ *          同时检测S1(P1_3)长按5秒复位。
  *          处理后重新启动下一次轮询定时器。
  * @return  none
  */
@@ -734,6 +740,23 @@ void zclSampleSw_ProcessTouchPoll(void)
       touchDebounce[i] = 0;
       touchPending[i] = stableBit;
     }
+  }
+
+  // S1长按检测 (P1_3, 低电平有效)
+  if (!P1_3)
+  {
+    s1HoldCount++;
+    if (s1HoldCount >= S1_RESET_THRESHOLD)
+    {
+      s1HoldCount = 0;
+      // LED闪烁提示后执行工厂复位(离开网络+清除配网状态)
+      HalLedBlink(HAL_LED_ALL, 5, 50, 200);
+      bdb_resetLocalAction();
+    }
+  }
+  else
+  {
+    s1HoldCount = 0;
   }
 
   // 重新启动下一次轮询
