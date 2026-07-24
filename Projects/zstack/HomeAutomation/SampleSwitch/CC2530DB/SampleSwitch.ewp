@@ -5635,12 +5635,12 @@
                 </option>
                 <option>
                     <name>ExtraOutputFile</name>
-                    <state>RouterEB-OTAClient.sim</state>
+                    <state>SampleSwitch.hex</state>
                 </option>
                 <option>
                     <name>ExtraOutputFormat</name>
                     <version>11</version>
-                    <state>60</state>
+                    <state>23</state>
                 </option>
                 <option>
                     <name>ExtraFormatVariant</name>
