@@ -4,6 +4,16 @@
 
 ---
 
+## v0.1.2 - 2026-07-25
+
+新增EP5-8输入状态端点(genAnalogInput)，修复z2m input_state功能。
+
+### Added
+- EP5-8 genAnalogInput cluster: 4路触摸输入状态上报(presentValue, single_float, 1.0f=触摸/0.0f=未触摸)
+- 触摸状态变化时主动上报input_state到z2m
+
+---
+
 ## v0.1.1 - 2026-07-24
 
 触摸检测BUG修复版本。

@@ -99,7 +99,7 @@ const uint8 zclSampleSw_ModelId[] = { 11, 'a','l','a','b','.','s','w','i','t','c
 // DateCode: 固件编译日期 (ZCL DateCode 属性, 格式: YYYYMMDD)
 // SwBuildId: 固件版本号 (ZCL SwBuildId 属性, 格式: vX.Y.Z)
 const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','4' };
-const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','0','.','1','.','1' };
+const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','0','.','1','.','2' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
 uint8 zclSampleSw_LocationDescription[17];
@@ -376,6 +376,56 @@ CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[] =
 };
 
 CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS = ( sizeof(zclSampleSw_RelayAttrs_ep1) / sizeof(zclSampleSw_RelayAttrs_ep1[0]) );
+
+/*********************************************************************
+ * 4路输入状态端点 (EP 5-8) — genAnalogInput server 簇
+ * 对应 alab.switch 的 in1/in2/in3/in4
+ * presentValue: single_float (0x39), 1.0f=触摸中, 0.0f=未触摸
+ */
+
+// 4路输入状态 (1.0f=触摸中, 0.0f=未触摸)
+float zclSampleSw_InputState[SAMPLESW_NUM_INPUTS] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+// genAnalogInput input cluster list
+const cId_t zclSampleSw_InputInClusterList[] =
+{
+  ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC,
+};
+
+#define ZCLSAMPLESW_MAX_INPUT_INCLUSTERS  ( sizeof(zclSampleSw_InputInClusterList) / sizeof(zclSampleSw_InputInClusterList[0]) )
+
+// 4个输入端点的 SimpleDescriptor
+SimpleDescriptionFormat_t zclSampleSw_InputSimpleDesc[SAMPLESW_NUM_INPUTS] =
+{
+  { SAMPLESW_ENDPOINT_INPUT1, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_SIMPLE_SENSOR, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_INPUT_INCLUSTERS, (cId_t *)zclSampleSw_InputInClusterList, 0, NULL },
+  { SAMPLESW_ENDPOINT_INPUT2, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_SIMPLE_SENSOR, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_INPUT_INCLUSTERS, (cId_t *)zclSampleSw_InputInClusterList, 0, NULL },
+  { SAMPLESW_ENDPOINT_INPUT3, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_SIMPLE_SENSOR, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_INPUT_INCLUSTERS, (cId_t *)zclSampleSw_InputInClusterList, 0, NULL },
+  { SAMPLESW_ENDPOINT_INPUT4, ZCL_HA_PROFILE_ID, ZCL_HA_DEVICEID_SIMPLE_SENSOR, SAMPLESW_DEVICE_VERSION, SAMPLESW_FLAGS,
+    ZCLSAMPLESW_MAX_INPUT_INCLUSTERS, (cId_t *)zclSampleSw_InputInClusterList, 0, NULL },
+};
+
+// 每个端点的 genAnalogInput 属性列表
+CONST zclAttrRec_t zclSampleSw_InputAttrs_ep5[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[0] } },
+};
+CONST zclAttrRec_t zclSampleSw_InputAttrs_ep6[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[1] } },
+};
+CONST zclAttrRec_t zclSampleSw_InputAttrs_ep7[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[2] } },
+};
+CONST zclAttrRec_t zclSampleSw_InputAttrs_ep8[] =
+{
+  { ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC, { ATTRID_IOV_BASIC_PRESENT_VALUE, ZCL_DATATYPE_SINGLE_PREC, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_InputState[3] } },
+};
+
+CONST uint8 ZCLSAMPLESW_NUM_INPUT_ATTRS = ( sizeof(zclSampleSw_InputAttrs_ep5) / sizeof(zclSampleSw_InputAttrs_ep5[0]) );
 
 /*********************************************************************
  * GLOBAL FUNCTIONS

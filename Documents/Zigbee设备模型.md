@@ -7,9 +7,11 @@ Endpoint 1: genOnOff (第1路开关) → 继电器 1 / LED 1
 Endpoint 2: genOnOff (第2路开关) → 继电器 2 / LED 2
 Endpoint 3: genOnOff (第3路开关) → 继电器 3 / LED 3
 Endpoint 4: genOnOff (第4路开关) → 继电器 4 / LED 4
+Endpoint 5: genAnalogInput (第1路输入状态) → 触摸按键 1
+Endpoint 6: genAnalogInput (第2路输入状态) → 触摸按键 2
+Endpoint 7: genAnalogInput (第3路输入状态) → 触摸按键 3
+Endpoint 8: genAnalogInput (第4路输入状态) → 触摸按键 4
 ```
-
-> 预留：Endpoint 5-8 可用于 genAnalogInput（触摸按键状态上报），匹配 alab.switch 完整功能，后续版本实现。
 
 ## Cluster 定义
 

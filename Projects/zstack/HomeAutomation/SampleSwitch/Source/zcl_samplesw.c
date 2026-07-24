@@ -104,6 +104,13 @@ extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[];
 extern CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[];
 extern CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS;
 
+// 4路输入状态端点属性数组 (定义在 zcl_samplesw_data.c)
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep5[];
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep6[];
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep7[];
+extern CONST zclAttrRec_t zclSampleSw_InputAttrs_ep8[];
+extern CONST uint8 ZCLSAMPLESW_NUM_INPUT_ATTRS;
+
 /*********************************************************************
  * MACROS
  */
@@ -194,6 +201,7 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
+static void zclSampleSw_ReportInputState(uint8 idx);
 
 
 // Functions to process ZCL Foundation incoming Command/Response messages
@@ -362,6 +370,19 @@ void zclSampleSw_Init( byte task_id )
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY2, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep2);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY3, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep3);
     zcl_registerAttrList(SAMPLESW_ENDPOINT_RELAY4, ZCLSAMPLESW_NUM_RELAY_ATTRS, zclSampleSw_RelayAttrs_ep4);
+  }
+
+  // 注册4路输入状态端点 (EP 5-8, 对应 alab.switch in1-in4)
+  {
+    uint8 ep;
+    for (ep = 0; ep < SAMPLESW_NUM_INPUTS; ep++)
+    {
+      bdb_RegisterSimpleDescriptor(&zclSampleSw_InputSimpleDesc[ep]);
+    }
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT1, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep5);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT2, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep6);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT3, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep7);
+    zcl_registerAttrList(SAMPLESW_ENDPOINT_INPUT4, ZCLSAMPLESW_NUM_INPUT_ATTRS, zclSampleSw_InputAttrs_ep8);
   }
 
   // 86开关: 初始化继电器/LED/触摸GPIO, 并根据zclSampleSw_RelayState应用初始输出
@@ -671,6 +692,47 @@ static void zclSampleSw_ReportOnOffState(uint8 idx)
 }
 
 /*********************************************************************
+ * @fn      zclSampleSw_ReportInputState
+ * @brief   向协调器上报指定通道的输入状态(genAnalogInput.presentValue)
+ *          触摸状态变化时调用, 使z2m的input_state_inX同步
+ * @param   idx - 输入索引 0~3
+ * @return  none
+ */
+static void zclSampleSw_ReportInputState(uint8 idx)
+{
+  uint8 ep;
+  zclReportCmd_t *reportCmd;
+  zclReport_t *reportRec;
+
+  switch (idx)
+  {
+    case 0:  ep = SAMPLESW_ENDPOINT_INPUT1; break;
+    case 1:  ep = SAMPLESW_ENDPOINT_INPUT2; break;
+    case 2:  ep = SAMPLESW_ENDPOINT_INPUT3; break;
+    case 3:  ep = SAMPLESW_ENDPOINT_INPUT4; break;
+    default: return;
+  }
+
+  reportCmd = (zclReportCmd_t *)osal_msg_allocate(sizeof(zclReportCmd_t) + sizeof(zclReport_t));
+  if (reportCmd == NULL) return;
+
+  reportCmd->numAttr = 1;
+  reportRec = &(reportCmd->attrList[0]);
+  reportRec->attrID = ATTRID_IOV_BASIC_PRESENT_VALUE;
+  reportRec->dataType = ZCL_DATATYPE_SINGLE_PREC;
+  reportRec->attrData = (uint8 *)&zclSampleSw_InputState[idx];
+
+  zclSampleSw_DstAddr.addrMode = (afAddrMode_t)Addr16Bit;
+  zclSampleSw_DstAddr.addr.shortAddr = 0;  // 协调器
+  zclSampleSw_DstAddr.endPoint = 1;
+
+  zcl_SendReportCmd(ep, &zclSampleSw_DstAddr, ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC,
+                    reportCmd, ZCL_FRAME_SERVER_CLIENT_DIR, TRUE, zclSampleSwSeqNum++);
+
+  osal_msg_deallocate((uint8 *)reportCmd);
+}
+
+/*********************************************************************
  * @fn      zclSampleSw_ReadTouchInputs
  * @brief   读取P0_4~P0_7触摸输入, 低电平=触摸中(WTC6106BSI输出极性固定)
  *          经诊断固件验证: WTC6106BSI未触摸=高电平, 触摸=低电平
@@ -732,6 +794,9 @@ void zclSampleSw_ProcessTouchPoll(void)
         {
           touchStableState &= ~BV(i);
         }
+        // 更新input_state并上报 (1.0f=触摸中, 0.0f=未触摸)
+        zclSampleSw_InputState[i] = curBit ? 1.0f : 0.0f;
+        zclSampleSw_ReportInputState(i);
         touchDebounce[i] = 0;
       }
     }

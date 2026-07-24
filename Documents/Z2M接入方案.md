@@ -67,10 +67,10 @@ const uint8 zclSampleSw_ModelId[] = { 11, 'a','l','a','b','.','s','w','i','t','c
 | EP 2 (l2) | 继电器 2 | genOnOff | ✅ 已实现 |
 | EP 3 (l3) | 继电器 3 | genOnOff | ✅ 已实现 |
 | EP 4 (l4) | 继电器 4 | genOnOff | ✅ 已实现 |
-| EP 5 (in1) | 输入 1 | genAnalogInput | ❌ 待实现 |
-| EP 6 (in2) | 输入 2 | genAnalogInput | ❌ 待实现 |
-| EP 7 (in3) | 输入 3 | genAnalogInput | ❌ 待实现 |
-| EP 8 (in4) | 输入 4 | genAnalogInput | ❌ 待实现 |
+| EP 5 (in1) | 输入 1 | genAnalogInput | ✅ 已实现 |
+| EP 6 (in2) | 输入 2 | genAnalogInput | ✅ 已实现 |
+| EP 7 (in3) | 输入 3 | genAnalogInput | ✅ 已实现 |
+| EP 8 (in4) | 输入 4 | genAnalogInput | ✅ 已实现 |
 
 ## 备选: 自定义 External Converter
 
