@@ -4,6 +4,68 @@
 
 ---
 
+## v1.0.1 - 2026-07-26
+
+修复 v1.0.0 重构导致的设备无法入网问题。根因是移除 UI 模块时未补充 BDB commissioning 启动调用，导致 Zigbee 协议栈永不启动网络加入流程。
+
+### Fixed
+- BUG-012: 设备上电后无法入网，z2m 无任何日志。根因是 v1.0.0 重构时移除了 `UI_Init()` 调用，而 `UI_Init()` 内部第 1846 行隐式调用了 `bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP)` 启动 Zigbee commissioning。移除 UI 模块后没有补回这个调用，导致应用层正常运行（触摸/继电器工作正常）但 Zigbee 协议栈永不启动。修复：在 `zclSampleSw_Init()` 末尾显式调用 `bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP)`。
+
+### Changed
+- `zcl_samplesw.c`: 在 `zclSampleSw_Init()` 函数末尾补充 `bdb_StartCommissioning()` 调用
+- 版本号递增: v1.0.0 → v1.0.1 (BUG修复, 修订号递增)
+
+### 设计决策
+- **为何使用 `BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP` (0x00) 而非 `BDB_COMMISSIONING_MODE_NWK_STEERING`**: 与原 `UI_Init()` 行为保持一致。参数 0x00 让 BDB 自动判断：已配网设备尝试 rejoin 恢复网络，新设备触发 initialization 后启动 NWK_STEERING commissioning。
+- **为何不在 OSAL 启动后立即调用**: 必须在 `bdb_Init()` 完成后调用，`zclSampleSw_Init()` 是应用层最后一个初始化的任务，此时 bdb 已完成初始化，调用安全。
+
+### Migration
+- 烧录 v1.0.1 后设备能正常入网
+- 其他功能与 v1.0.0 设计一致（HAL_KEY 已禁用，无引脚冲突干扰）
+
+---
+
+## v1.0.0 - 2026-07-26
+
+完全重构固件工程，从 Z-Stack 3.0.2 官方 SampleSwitch 示例中剥离残留代码，创建独立的 HGZBSwitch 工程。根除 hal_key.c 的 P2.0(继电器4)/P0.6(触摸输入3) 引脚冲突干扰，移除 UI/LCD/MT/Touchlink/GP 等无用模块。
+
+### Changed - 架构重构
+- **新建独立工程**: `Projects/zstack/HomeAutomation/HGZBSwitch/`，与原 SampleSwitch 工程分离
+- **新工程文件**: `HGZBSwitch.ewp` / `HGZBSwitch.eww`，只保留 RouterEB 配置（移除 CoordinatorEB/EndDeviceEB/OTAClient）
+- **版本号升至 v1.0.0**: 主版本号变更表示重大架构重构
+
+### Removed - 移除的模块（共28个.c文件）
+- **UI 模块**: 移除 zcl_sampleapps_ui.c 及所有 UI_Init/UI_UpdateLcd/UI_MainStateMachine/UI_DeviceStateUpdated/UI_UpdateComissioningStatus 调用
+- **MT 模块**: 移除 15个 MT_*.c 文件（DebugTrace/MT/MT_AF/MT_APP/MT_APP_CONFIG/MT_DEBUG/MT_GP/MT_NWK/MT_SAPI/MT_SYS/MT_TASK/MT_UART/MT_UTIL/MT_VERSION/MT_ZDO）
+- **Touchlink 模块**: 移除 bdb_touchlink.c/bdb_touchlink_initiator.c/bdb_touchlink_target.c/bdb_tlCommissioning.c
+- **Green Power 模块**: 移除 gp_common.c/gp_proxyTbl.c/zcl_green_power.c（定义 DISABLE_GREENPOWER_BASIC_PROXY）
+- **HA Profile**: 移除 zcl_ha.c（仅保留 zcl_ha.h 头文件）
+- **HAL_UART**: 移除 hal_uart.c（HAL_UART 已为 FALSE）
+
+### Fixed - 通过宏禁用的模块
+- **HAL_KEY=FALSE**: 禁用按键模块，根除 P2.0(继电器4)/P0.6(触摸输入3) 引脚冲突。hal_key.c 保留编译（提供空实现），因 OnBoard.c 直接调用 HalKeyConfig
+- **HAL_LCD=FALSE + 移除 LCD_SUPPORTED=DEBUG**: 禁用 LCD 模块。hal_lcd.c 已从工程移除
+- **HAL_ADC=FALSE**: 禁用 ADC 读取功能。hal_adc.c 保留编译，因 ZMain.c 调用 HalAdcCheckVdd 检查电压
+- **HAL_KEY=FALSE 时 hal_key.c 编译为空实现**: HalKeyInit/HalKeyConfig/HalKeyPoll 均为空函数，不再干扰 GPIO
+
+### Removed - 事件定义
+- 移除 SAMPLEAPP_LCD_AUTO_UPDATE_EVT (0x0010) 事件定义
+- 移除 SAMPLEAPP_KEY_AUTO_REPEAT_EVT (0x0020) 事件定义
+
+### 设计决策
+1. **为何保留 hal_key.c/hal_adc.c/hal_sleep.c**: 协议栈核心文件（OnBoard.c/ZMain.c/mac_mcu.c）直接调用 HalKeyConfig/HalAdcCheckVdd/halSetMaxSleepLoopTime，无条件编译保护。保留这些文件但通过宏禁用功能，函数编译为空实现或仅保留电压检查功能
+2. **为何移除 UI 模块**: 设备无 LCD、无物理按键，UI 模块的 UI_Init/UI_UpdateLcd/UI_MainStateMachine 调用完全无用。移除后减少 Flash 占用和编译时间
+3. **为何移除 GP 模块**: Green Power Basic Proxy 是 HA 1.2 Router 可选特性，本项目不需要。移除后释放 Flash 和 NV 空间
+4. **为何保留 hal_led.c**: 继电器控制通过 LED 引脚（P0_0~P0_3），hal_led.c 提供必要的 GPIO 操作宏
+
+### Migration
+- 烧录 v1.0.0 后，设备功能与 v0.2.4 完全一致
+- LED1 待机稳定性应更好（hal_key.c 已禁用，不再干扰 GPIO）
+- 编译时间减少约 30%（移除 28 个 .c 文件）
+- Flash 占用减少（移除 UI/LCD/MT/Touchlink/GP 模块代码）
+
+---
+
 ## v0.2.4 - 2026-07-25
 
 修复 S1 长按复位流程中的 LED 异常问题。根因是应用层直接操作 P0_0 绕过 HalLed 层导致 HalLedState 与硬件状态不一致，以及 HalLedBlink 闪烁参数过快（50ms on/200ms off，1秒内完成5次闪烁，视觉上只剩3次）。同时排查到 z2m 日志无离网请求是因 bdb_resetLocalAction() 在设备不在网络时直接重启不发送 NLME_LeaveReq。

@@ -4,7 +4,12 @@ Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB/
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/CoordinatorEB/
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/EndDeviceEB/
 Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/settings/
+Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/RouterEB/
+Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/settings/
 *.dep
+
+# 测试日志
+Documents/*.log
 
 # Object files
 *.o

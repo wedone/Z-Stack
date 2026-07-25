@@ -562,3 +562,77 @@ static void zclSampleSw_ProcessResetBlink(void)
 - `zcl_samplesw.h`: 新增 `SAMPLESW_RESET_BLINK_EVT` (0x0040) 事件定义
 - `zcl_samplesw.c`: 新增 `RESET_BLINK_TOTAL_COUNT`/`RESET_BLINK_PERIOD_MS` 宏, `resetBlinkCount` 变量, `zclSampleSw_StartResetBlink()`/`zclSampleSw_ProcessResetBlink()` 函数, 修改 S1 长按检测逻辑, 新增每 100ms 防御性刷新
 - `zcl_samplesw_data.c`: 版本号 v0.2.3 → v0.2.4
+
+---
+
+## BUG-012: v1.0.0 重构后设备无法入网
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-26 |
+| **版本** | v1.0.0 (HGZBSwitch 工程首版) |
+| **commit** | 待提交 |
+| **严重度** | 高 - 设备完全无法入网 |
+
+### 现象
+
+1. 烧录 v1.0.0 固件后断电重启，协调器已允许入网
+2. z2m 日志无任何设备入网/采访消息
+3. 设备应用层正常：触摸1~4 按键能切换继电器，LED1 持续亮
+4. 设备无串口输出（86开关模块本身无串口）
+
+### 根因
+
+v1.0.0 重构时移除了 `UI_Init()` 调用，但 `UI_Init()` 内部第 1846 行隐式调用了 Zigbee commissioning 启动入口：
+
+```c
+// Projects/zstack/HomeAutomation/Source/zcl_sampleapps_ui.c:1846
+void UI_Init(...)
+{
+  ...
+  bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP);  // ← 这一行是 Zigbee 启动入口
+}
+```
+
+`UI_Init()` 在原 SampleSwitch 工程中负责 UI 初始化和触发 Zigbee commissioning，移除 UI 模块时只关注了 UI 部分，忽略了它还承担的 commissioning 启动职责。
+
+### 诊断过程
+
+1. 设备应用层正常（触摸/继电器工作）→ 应用层代码正常
+2. z2m 无任何日志 → Zigbee 协议栈未发送任何帧
+3. 检查 `zclSampleSw_Init()` 末尾对比 SampleSwitch 工程：发现 SampleSwitch 调用 `UI_Init()`，而 HGZBSwitch 移除了
+4. 检查 `UI_Init()` 实现：发现它内部调用了 `bdb_StartCommissioning()`
+5. 检查整个工程：没有任何其他地方调用 `bdb_StartCommissioning()` 启动 commissioning（仅 MT_ZDO.c 有用于 MT 调试的调用，但 MT 模块已禁用）
+
+### 修复方案
+
+在 `zclSampleSw_Init()` 函数末尾显式补充 `bdb_StartCommissioning()` 调用：
+
+```c
+// v1.0.0修复: UI模块剥离后, 需显式触发BDB commissioning启动Zigbee网络
+// 原本由 UI_Init() 内部调用 bdb_StartCommissioning(), 移除UI后应用层需自行启动
+bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP);
+```
+
+### 参数选择
+
+`BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP` (0x00) 与原 `UI_Init()` 行为一致：
+- **已配网设备**: BDB 自动尝试 rejoin 恢复网络
+- **新设备**: BDB 触发 initialization 后启动 NWK_STEERING commissioning
+
+不直接使用 `BDB_COMMISSIONING_MODE_NWK_STEERING` 是因为前者更智能，能处理 NV_RESTORE 场景。
+
+### 设计决策
+
+1. **为何调用位置在 `zclSampleSw_Init()` 末尾**: `zclSampleSw_Init` 是应用层最后一个初始化的任务，此时 `bdb_Init()` 已完成，调用 `bdb_StartCommissioning()` 安全。
+2. **为何 Z-Stack 没有自动启动 commissioning**: Z-Stack 3.0.2 的设计哲学是让应用层决定何时启动 commissioning，所以协议栈本身不会自动调用。
+
+### 涉及文件
+
+- `zcl_samplesw.c`: 在 `zclSampleSw_Init()` 函数末尾补充 `bdb_StartCommissioning()` 调用
+- `zcl_samplesw_data.c`: 版本号 v1.0.0 → v1.0.1
+
+### 经验教训
+
+- **移除第三方代码时必须完整理解其副作用**: `UI_Init()` 名为 UI 初始化，实际还承担了 commissioning 启动职责。重构前应先 grep 所有 `bdb_StartCommissioning` 调用，确认入口点。
+- **协议栈启动入口需显式调用**: Z-Stack 不会自动启动 commissioning，应用层必须主动调用 `bdb_StartCommissioning()`。
