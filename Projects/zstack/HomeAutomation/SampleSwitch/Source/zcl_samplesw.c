@@ -193,8 +193,8 @@ static uint8 touchPending[4]  = {0, 0, 0, 0};   // 各通道待确认的新电�
 // S1长按复位计数器 (每次触摸轮询+1, 达到S1_RESET_THRESHOLD执行复位)
 static uint8 s1HoldCount = 0;
 
-// 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改)
-static uint8 startupOnOffCached = STARTUP_ONOFF_PREVIOUS;
+// 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改, 4路独立)
+static uint8 startupOnOffCached[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
 
 /*********************************************************************
  * LOCAL FUNCTIONS
@@ -666,7 +666,7 @@ void zclSampleSw_UpdateAllRelayOutputs(void)
  *
  * 数据布局:
  *   SAMPLESW_NV_ID_RELAY_STATE   (0x0F10): 4字节, 4路继电器状态
- *   SAMPLESW_NV_ID_STARTUP_ONOFF (0x0F11): 1字节, startUpOnOff配置
+ *   SAMPLESW_NV_ID_STARTUP_ONOFF (0x0F12): 4字节, 4路独立startUpOnOff配置 (v0.2.2起)
  *
  * 开关控制: Z2M通过读写startUpOnOff属性(0x4003)控制断电记忆行为
  *   0x00=上电OFF, 0x01=上电ON, 0x02=上电TOGGLE, 0xFF=恢复断电前状态
@@ -680,16 +680,16 @@ void zclSampleSw_UpdateAllRelayOutputs(void)
 static void zclSampleSw_NvInit(void)
 {
   uint8 defaultRelayState[SAMPLESW_NUM_RELAYS] = {FALSE, FALSE, FALSE, FALSE};
-  uint8 defaultStartupOnOff = STARTUP_ONOFF_PREVIOUS;
+  uint8 defaultStartupOnOff[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
 
   // osal_nv_item_init: 若NV项已存在则不做改动, 不存在则用默认值创建
   osal_nv_item_init(SAMPLESW_NV_ID_RELAY_STATE, SAMPLESW_NUM_RELAYS, defaultRelayState);
-  osal_nv_item_init(SAMPLESW_NV_ID_STARTUP_ONOFF, 1, &defaultStartupOnOff);
+  osal_nv_item_init(SAMPLESW_NV_ID_STARTUP_ONOFF, SAMPLESW_NUM_RELAYS, defaultStartupOnOff);
 }
 
 /*********************************************************************
  * @fn      zclSampleSw_NvLoadPowerOnState
- * @brief   上电时从NV读取配置和断电前状态, 按startUpOnOff策略恢复继电器
+ * @brief   上电时从NV读取配置和断电前状态, 按4路独立startUpOnOff策略恢复继电器
  *          必须在zclSampleSw_UpdateAllRelayOutputs()之前调用
  * @return  none
  */
@@ -698,13 +698,14 @@ static void zclSampleSw_NvLoadPowerOnState(void)
   uint8 savedRelayState[SAMPLESW_NUM_RELAYS];
   uint8 i;
 
-  // 读取startUpOnOff配置
-  if (osal_nv_read(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &zclSampleSw_StartUpOnOff) != SUCCESS)
+  // 读取4路独立startUpOnOff配置
+  if (osal_nv_read(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, SAMPLESW_NUM_RELAYS, zclSampleSw_StartUpOnOff) != SUCCESS)
   {
     // NV读取失败, 保持编译时默认值
-    zclSampleSw_StartUpOnOff = STARTUP_ONOFF_PREVIOUS;
+    for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+      zclSampleSw_StartUpOnOff[i] = STARTUP_ONOFF_PREVIOUS;
   }
-  startupOnOffCached = zclSampleSw_StartUpOnOff;
+  osal_memcpy(startupOnOffCached, zclSampleSw_StartUpOnOff, SAMPLESW_NUM_RELAYS);
 
   // 读取断电前继电器状态
   if (osal_nv_read(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, savedRelayState) != SUCCESS)
@@ -713,26 +714,25 @@ static void zclSampleSw_NvLoadPowerOnState(void)
     return;
   }
 
-  // 按startUpOnOff策略设置上电继电器状态
-  switch (zclSampleSw_StartUpOnOff)
+  // 按每路独立startUpOnOff策略设置上电继电器状态 (BUG-009修复: 4路独立配置)
+  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
   {
-    case STARTUP_ONOFF_OFF:
-      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+    switch (zclSampleSw_StartUpOnOff[i])
+    {
+      case STARTUP_ONOFF_OFF:
         zclSampleSw_RelayState[i] = FALSE;
-      break;
-    case STARTUP_ONOFF_ON:
-      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        break;
+      case STARTUP_ONOFF_ON:
         zclSampleSw_RelayState[i] = TRUE;
-      break;
-    case STARTUP_ONOFF_TOGGLE:
-      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        break;
+      case STARTUP_ONOFF_TOGGLE:
         zclSampleSw_RelayState[i] = !savedRelayState[i];
-      break;
-    case STARTUP_ONOFF_PREVIOUS:
-    default:
-      for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+        break;
+      case STARTUP_ONOFF_PREVIOUS:
+      default:
         zclSampleSw_RelayState[i] = savedRelayState[i];
-      break;
+        break;
+    }
   }
 }
 
@@ -756,7 +756,7 @@ static void zclSampleSw_NvScheduleSave(void)
 static void zclSampleSw_NvProcessSave(void)
 {
   uint8 savedRelayState[SAMPLESW_NUM_RELAYS];
-  uint8 savedStartupOnOff;
+  uint8 savedStartupOnOff[SAMPLESW_NUM_RELAYS];
 
   // 1. 对比并写入继电器状态
   if (osal_nv_read(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, savedRelayState) == SUCCESS)
@@ -772,17 +772,17 @@ static void zclSampleSw_NvProcessSave(void)
     osal_nv_write(SAMPLESW_NV_ID_RELAY_STATE, 0, SAMPLESW_NUM_RELAYS, zclSampleSw_RelayState);
   }
 
-  // 2. 对比并写入startUpOnOff配置
-  if (osal_nv_read(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &savedStartupOnOff) == SUCCESS)
+  // 2. 对比并写入4路独立startUpOnOff配置
+  if (osal_nv_read(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, SAMPLESW_NUM_RELAYS, savedStartupOnOff) == SUCCESS)
   {
-    if (savedStartupOnOff != zclSampleSw_StartUpOnOff)
+    if (osal_memcmp(savedStartupOnOff, zclSampleSw_StartUpOnOff, SAMPLESW_NUM_RELAYS) == FALSE)
     {
-      osal_nv_write(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &zclSampleSw_StartUpOnOff);
+      osal_nv_write(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, SAMPLESW_NUM_RELAYS, zclSampleSw_StartUpOnOff);
     }
   }
   else
   {
-    osal_nv_write(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, 1, &zclSampleSw_StartUpOnOff);
+    osal_nv_write(SAMPLESW_NV_ID_STARTUP_ONOFF, 0, SAMPLESW_NUM_RELAYS, zclSampleSw_StartUpOnOff);
   }
 }
 
@@ -1021,11 +1021,11 @@ void zclSampleSw_ProcessTouchPoll(void)
     s1HoldCount = 0;
   }
 
-  // 断电记忆: 检测Z2M远程修改的startUpOnOff属性 (100ms周期轮询)
-  // 若发现变化, 调度延迟写入NV持久化新配置
-  if (zclSampleSw_StartUpOnOff != startupOnOffCached)
+  // 断电记忆: 检测Z2M远程修改的startUpOnOff属性 (100ms周期轮询, 4路独立)
+  // 若发现任一路变化, 调度延迟写入NV持久化新配置
+  if (osal_memcmp(zclSampleSw_StartUpOnOff, startupOnOffCached, SAMPLESW_NUM_RELAYS) == FALSE)
   {
-    startupOnOffCached = zclSampleSw_StartUpOnOff;
+    osal_memcpy(startupOnOffCached, zclSampleSw_StartUpOnOff, SAMPLESW_NUM_RELAYS);
     zclSampleSw_NvScheduleSave();
   }
 

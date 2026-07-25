@@ -99,7 +99,7 @@ const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X
 // DateCode: 固件编译日期 (ZCL DateCode 属性, 格式: YYYYMMDD)
 // SwBuildId: 固件版本号 (ZCL SwBuildId 属性, 格式: vX.Y.Z)
 const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','5' };
-const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','0','.','2','.','1' };
+const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','0','.','2','.','2' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
 uint8 zclSampleSw_LocationDescription[17];
@@ -336,8 +336,9 @@ SimpleDescriptionFormat_t zclSampleSw_SimpleDesc =
 // 4路继电器开关状态 (FALSE=OFF, TRUE=ON)
 uint8 zclSampleSw_RelayState[SAMPLESW_NUM_RELAYS] = {FALSE, FALSE, FALSE, FALSE};
 
-// 断电记忆: startUpOnOff配置 (4路共用, 默认恢复之前状态)
-uint8 zclSampleSw_StartUpOnOff = STARTUP_ONOFF_PREVIOUS;
+// 断电记忆: startUpOnOff配置 (4路独立, 默认恢复之前状态)
+// v0.2.2修复BUG-009: 4路共用单变量导致Z2M独立配置被覆盖, 改为4路独立数组
+uint8 zclSampleSw_StartUpOnOff[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
 
 // genOnOff input cluster list (4个端点共用)
 const cId_t zclSampleSw_RelayInClusterList[] =
@@ -364,22 +365,22 @@ SimpleDescriptionFormat_t zclSampleSw_RelaySimpleDesc[SAMPLESW_NUM_RELAYS] =
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep1[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[0] } },
-  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff } },
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[0] } },
 };
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep2[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[1] } },
-  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff } },
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[1] } },
 };
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[2] } },
-  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff } },
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[2] } },
 };
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[3] } },
-  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff } },
+  { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8, ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[3] } },
 };
 
 CONST uint8 ZCLSAMPLESW_NUM_RELAY_ATTRS = ( sizeof(zclSampleSw_RelayAttrs_ep1) / sizeof(zclSampleSw_RelayAttrs_ep1[0]) );

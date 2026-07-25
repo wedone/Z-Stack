@@ -4,6 +4,30 @@
 
 ---
 
+## v0.2.2 - 2026-07-25
+
+修复断电恢复时 4 路开关全部为 ON 的严重 BUG。根因是 startUpOnOff 配置 4 路共用一个全局变量，Z2M 写入 4 路独立配置时被互相覆盖。
+
+### Fixed
+- BUG-009: 断电恢复时 4 路开关全部为 ON。Z2M HGZB-4S 定义中 4 路有独立 `power_on_behavior` 配置, 但固件中 `zclSampleSw_StartUpOnOff` 是单变量, 4 个 EP 的 startUpOnOff 属性都指向它。Z2M 写入 l1=off→l2=off→l3=on→l4=on 时, 最后写入的 on(0x01) 覆盖所有, 4 路全部按 ON 恢复。
+
+### Changed
+- `zclSampleSw_StartUpOnOff`: 单变量 → `uint8[4]` 数组, 4 路独立配置
+- `startupOnOffCached`: 单变量 → `uint8[4]` 数组, 用于检测 4 路独立变化
+- 4 个 EP 属性表 (`zclSampleSw_RelayAttrs_ep1~4`) 的 startUpOnOff 属性分别指向 `&zclSampleSw_StartUpOnOff[0~3]`
+- `zclSampleSw_NvLoadPowerOnState`: 改为按每路独立 startUpOnOff 策略恢复 (每路可独立 off/on/toggle/previous)
+- `zclSampleSw_NvProcessSave`: NV 写入长度从 1 字节改为 4 字节
+- `zclSampleSw_ProcessTouchPoll`: 用 `osal_memcmp` 检测 4 路数组变化
+- NV ID: `SAMPLESW_NV_ID_STARTUP_ONOFF` 从 0x0F11 改为 0x0F12, 避开旧的 1 字节不兼容数据 (旧 NV 项遗留但不使用, 无副作用)
+- 版本号递增: v0.2.1 → v0.2.2 (BUG修复, 修订号递增)
+
+### Migration
+- 用户烧录 v0.2.2 后, 第一次启动 NV ID 0x0F12 不存在, 会用默认值 `PREVIOUS` 创建 4 路
+- 首次启动 4 路都按 `PREVIOUS` (恢复断电前状态) 恢复
+- 用户需要在 Z2M 重新配置每路 `power_on_behavior` (此前 Z2M 端显示的配置不会真正下发到设备)
+
+---
+
 ## v0.2.1 - 2026-07-25
 
 修复 Z2M 状态与设备实际状态不同步的两个 BUG。新增入网后立即上报和周期性上报机制。

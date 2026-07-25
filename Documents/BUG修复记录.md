@@ -293,3 +293,68 @@ if (curBit) {
 ### 涉及文件
 
 - `zcl_samplesw.c`: 新增 `SAMPLESW_STATE_REPORT_EVT` 事件处理, 新增 `STATE_REPORT_INTERVAL_MS` 宏, 入网时启动周期定时器
+
+---
+
+## BUG-009: 断电恢复时 4 路开关全部为 ON
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-25 |
+| **版本** | v0.2.1 |
+| **commit** | 待提交 |
+| **严重度** | 高 - 断电记忆功能完全失效, 不按用户配置恢复 |
+
+### 现象
+
+1. Z2M 配置每路 `power_on_behavior` 不同: l1=off, l2=off, l3=on, l4=on
+2. Z2M 和设备当前状态都为 ON
+3. 断电再上电后, 4 路继电器**全部恢复为 ON** (而非按 l1/l2=off 恢复为 OFF)
+4. Z2M 日志显示 `state_l1~l4: ON`, 与配置的 l1/l2=off 不符
+
+### 根因
+
+固件中 `zclSampleSw_StartUpOnOff` 是**单变量**, 但 4 个 EP (EP1-4) 的 startUpOnOff 属性表都指向它:
+
+```c
+// v0.2.1 错误实现 (zcl_samplesw_data.c)
+uint8 zclSampleSw_StartUpOnOff = STARTUP_ONOFF_PREVIOUS;  // 单变量
+
+// 4 个 EP 的属性表都指向同一个变量
+zclSampleSw_RelayAttrs_ep1[] = { ..., &zclSampleSw_StartUpOnOff };
+zclSampleSw_RelayAttrs_ep2[] = { ..., &zclSampleSw_StartUpOnOff };
+zclSampleSw_RelayAttrs_ep3[] = { ..., &zclSampleSw_StartUpOnOff };
+zclSampleSw_RelayAttrs_ep4[] = { ..., &zclSampleSw_StartUpOnOff };
+```
+
+Z2M HGZB-4S 定义中 4 路是独立 `power_on_behavior`, 会分别向 EP1/2/3/4 写入不同的 startUpOnOff 值。写入顺序 l1=0x00 → l2=0x00 → l3=0x01 → l4=0x01, 每次都覆盖同一个全局变量, 最后写入的 `0x01` (ON) 覆盖所有, 4 路全部按 ON 恢复。
+
+[Z2M接入方案.md](Z2M接入方案.md) 中"4路共用同一配置 (写任一端点的 power_on_behavior 即更新全局 startUpOnOff)" 是错误的设计描述, 违反了 Z2M HGZB-4S 每路独立的语义。
+
+### 修复方案
+
+将 startUpOnOff 改为 4 路独立数组:
+
+```c
+// v0.2.2 修复实现
+uint8 zclSampleSw_StartUpOnOff[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, ...};
+
+// 4 个 EP 属性表分别指向独立元素
+zclSampleSw_RelayAttrs_ep1[] = { ..., &zclSampleSw_StartUpOnOff[0] };
+zclSampleSw_RelayAttrs_ep2[] = { ..., &zclSampleSw_StartUpOnOff[1] };
+zclSampleSw_RelayAttrs_ep3[] = { ..., &zclSampleSw_StartUpOnOff[2] };
+zclSampleSw_RelayAttrs_ep4[] = { ..., &zclSampleSw_StartUpOnOff[3] };
+```
+
+配套修改:
+- `startupOnOffCached` 同步改为 `uint8[4]` 数组
+- `zclSampleSw_NvLoadPowerOnState`: 改为按每路独立 startUpOnOff 策略恢复 (循环 4 路, 每路独立判断 off/on/toggle/previous)
+- `zclSampleSw_NvProcessSave`: NV 写入长度从 1 字节改为 4 字节
+- `zclSampleSw_ProcessTouchPoll`: 用 `osal_memcmp` 检测 4 路数组变化
+- NV ID 从 0x0F11 改为 0x0F12, 避开旧的 1 字节不兼容数据 (旧 NV 项遗留但不使用)
+
+### 涉及文件
+
+- `zcl_samplesw.h`: `zclSampleSw_StartUpOnOff` extern 声明改为数组, NV ID 改为 0x0F12
+- `zcl_samplesw_data.c`: `zclSampleSw_StartUpOnOff` 定义改为数组, 4 个 EP 属性表分别指向独立元素
+- `zcl_samplesw.c`: `startupOnOffCached` 改数组, `NvInit`/`NvLoadPowerOnState`/`NvProcessSave`/`ProcessTouchPoll` 适配 4 路独立

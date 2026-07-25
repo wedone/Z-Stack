@@ -97,7 +97,7 @@ const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X
 | Toggle | 0x02 | 上电翻转断电前状态 |
 | Previous | 0xFF | 恢复断电前状态 (默认) |
 
-> 4路共用同一配置 (写任一端点的 power_on_behavior 即更新全局 startUpOnOff)。
+> **4 路独立配置** (v0.2.2 修复 BUG-009): 每路 `power_on_behavior` 独立存储和恢复, 互不影响。Z2M 写入 l1=off / l2=off / l3=on / l4=on 时, 4 路会分别按各自配置恢复。早期 v0.2.0/v0.2.1 误用 4 路共用单变量, 导致最后写入的值覆盖所有, 已在 v0.2.2 修复。
 
 ### 固件侧实现
 

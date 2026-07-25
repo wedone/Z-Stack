@@ -89,7 +89,7 @@ extern "C"
 
 // NV存储项ID (应用自定义, 避开Z-Stack系统区0x0001~0x0097和ZNP保留区0x0F01~0x0F07)
 #define SAMPLESW_NV_ID_RELAY_STATE          0x0F10  // 4路继电器状态
-#define SAMPLESW_NV_ID_STARTUP_ONOFF        0x0F11  // startUpOnOff配置
+#define SAMPLESW_NV_ID_STARTUP_ONOFF        0x0F12  // 4路独立startUpOnOff配置 (v0.2.2起, 避开v0.2.1的1字节旧ID 0x0F11)
 
 // startUpOnOff属性值 (ZCL标准)
 #define STARTUP_ONOFF_OFF                   0x00    // 上电关闭
@@ -127,8 +127,8 @@ extern CONST zclAttrRec_t zclSampleSw_Attrs[];
 
 extern uint8 zclSampleSw_RelayState[SAMPLESW_NUM_RELAYS];
 
-// 断电记忆: startUpOnOff配置 (4路共用, 默认恢复之前状态)
-extern uint8 zclSampleSw_StartUpOnOff;
+// 断电记忆: startUpOnOff配置 (4路独立, 默认恢复之前状态)
+extern uint8 zclSampleSw_StartUpOnOff[SAMPLESW_NUM_RELAYS];
 
 extern float zclSampleSw_InputState[SAMPLESW_NUM_INPUTS];
 
