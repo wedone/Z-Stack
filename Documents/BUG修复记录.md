@@ -142,11 +142,11 @@ WTC6106BSI 输出极性固定（未触摸=高，触摸=低），无需自适应�
 
 ### 现象
 
-固件 DateCode 属性仍为 DIYRuZ_RT 框架默认值 `20060831`，与实际编译日期不符，无法区分固件版本时间。
+固件 DateCode 属性仍为 Z-Stack SampleSwitch 示例默认值 `20060831`，与实际编译日期不符，无法区分固件版本时间。
 
 ### 根因
 
-DIYRuZ_RT 原始代码中 `zclSampleSw_DateCode` 硬编码为 `20060831`，移植时未同步修改。
+Z-Stack 3.0.2 官方 SampleSwitch 示例的 `zclSampleSw_DateCode` 硬编码为 `20060831`，移植时未同步修改。
 
 ### 修复方案
 

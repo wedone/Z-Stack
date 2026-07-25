@@ -21,7 +21,7 @@ Endpoint 8: genAnalogInput (第4路输入状态) → 触摸按键 4
 |---------|-----|------|------|------|
 | genBasic | 0x0000 | In | ModelIdentifier, ManufacturerName, DateCode, SwBuildId | 仅 EP1 包含完整属性 |
 | genIdentify | 0x0003 | In | IdentifyTime | |
-| genOnOff | 0x0006 | In/Out | onOff | 每路独立 |
+| genOnOff | 0x0006 | In/Out | onOff, startUpOnOff | 每路独立 (v0.2.2 起 startUpOnOff 4路独立) |
 | genGroups | 0x0004 | In/Out | — | 支持 Binding/群组控制 |
 
 > **genBasic 优化**: 仅 Endpoint 1 包含完整的 genBasic 属性（ModelId、ManufacturerName 等），Endpoint 2~4 的 genBasic 仅包含 ClusterRevision 等最小属性，节省 Flash 空间。
@@ -30,13 +30,52 @@ Endpoint 8: genAnalogInput (第4路输入状态) → 触摸按键 4
 
 | 属性 | 值 | 说明 |
 |------|-----|------|
-| ModelIdentifier | `alab.switch` | 借壳 Alab 4路继电器板（长度前缀=11，无空格填充） |
+| ModelIdentifier | `LXN-4S27LX1.0` | 借壳 HGZB-4S (LXN-4S27LX1.0)，Z2M 内置匹配 (长度前缀=14) |
 | ManufacturerName | `TexasInstruments` | 保持默认（zigbeeModel 匹配不检查此字段） |
 | DeviceID | `ZCL_HA_DEVICEID_ON_OFF_SWITCH` (0x0013) | Zigbee HA 标准开关 |
-| SwBuildId | `v0.1.0` | 固件版本号 |
-| DateCode | `20260724` | 编译日期 |
+| SwBuildId | `v0.2.2` | 固件版本号 |
+| DateCode | `20260725` | 编译日期 |
 
 ZCL 字符串格式：`[长度字节][字符数据]`，长度前缀必须等于实际字符数，不能用空格填充。
+
+---
+
+## startUpOnOff 属性 (断电记忆, v0.2.0+)
+
+### 属性定义
+
+`genOnOff` Cluster 的 `startUpOnOff` 属性 (ATTRID = 0x4003, ENUM8) 控制 4 路开关断电恢复行为：
+
+| 值 | 名称 | 行为 |
+|----|------|------|
+| 0x00 | OFF | 上电后该路为 OFF |
+| 0x01 | ON | 上电后该路为 ON |
+| 0x02 | TOGGLE | 上电后翻转断电前状态 |
+| 0xFF | PREVIOUS | 恢复断电前状态 (默认) |
+
+### 4 路独立配置 (v0.2.2 修复 BUG-009)
+
+| 版本 | 实现方式 | 问题 |
+|------|----------|------|
+| v0.2.0/v0.2.1 | `uint8 zclSampleSw_StartUpOnOff` 单变量, 4 EP 共用 | Z2M 写入 4 路独立配置时互相覆盖, 最后写入的值生效, 4 路全部按同一配置恢复 |
+| **v0.2.2+** | `uint8 zclSampleSw_StartUpOnOff[4]` 数组, 4 EP 独立 | 4 路可分别配置 off/on/toggle/previous, 互不影响 |
+
+**4 个 EP 属性表分别指向独立数组元素**:
+```c
+zclSampleSw_RelayAttrs_ep1[] = { ..., &zclSampleSw_StartUpOnOff[0] };
+zclSampleSw_RelayAttrs_ep2[] = { ..., &zclSampleSw_StartUpOnOff[1] };
+zclSampleSw_RelayAttrs_ep3[] = { ..., &zclSampleSw_StartUpOnOff[2] };
+zclSampleSw_RelayAttrs_ep4[] = { ..., &zclSampleSw_StartUpOnOff[3] };
+```
+
+### NV 持久化
+
+| NV ID | 大小 | 内容 | 说明 |
+|-------|------|------|------|
+| 0x0F10 | 4 字节 | 4 路继电器状态 | 断电前状态, 用于 PREVIOUS/TOGGLE 恢复 |
+| 0x0F12 | 4 字节 | 4 路独立 startUpOnOff 配置 | v0.2.2 起 (旧 ID 0x0F11 已废弃) |
+
+详见 [功能设计.md](功能设计.md) 断电记忆章节。
 
 ---
 
@@ -86,3 +125,58 @@ static void zclSampleSw_ReportOnOffState(uint8 idx)
 ```
 
 > 需要 `ZCL_REPORTING_DEVICE` 宏定义才能启用 `zcl_SendReportCmd` 函数。
+
+---
+
+## 状态同步机制 (v0.2.1+ 修复 BUG-007/BUG-008)
+
+### 问题背景
+
+| BUG | 现象 | 根因 |
+|-----|------|------|
+| BUG-007 | 断电恢复后设备状态变化, Z2M 状态不同步 | 上电恢复后无主动上报, Z2M 仅靠本地操作触发上报 |
+| BUG-008 | 本地操作时信号不好, Z2M 未收到上报, 状态长期不同步 | 单次上报无重试/补偿机制 |
+
+### 实现方案
+
+**双机制保证 Z2M 状态一致性**：
+
+| 机制 | 触发时机 | 实现 |
+|------|----------|------|
+| 入网立即上报 | ZDO 状态变为 `DEV_ROUTER` (入网成功) | 调度 `SAMPLESW_STATE_REPORT_EVT` 事件, 上报 4 路 OnOff 状态 |
+| 周期性上报 | 每 30 秒 | `STATE_REPORT_INTERVAL_MS = 30000ms` 定时器, 周期触发 `SAMPLESW_STATE_REPORT_EVT` |
+
+**事件处理**:
+```c
+#define SAMPLESW_STATE_REPORT_EVT  0x2000      // 状态上报事件
+#define STATE_REPORT_INTERVAL_MS   30000       // 周期 30 秒
+
+// ZDO 状态变化回调: 入网时立即上报 + 启动周期定时器
+if (state == DEV_ROUTER) {
+    osal_set_event(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT);
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT, STATE_REPORT_INTERVAL_MS);
+}
+
+// 事件处理: 上报 4 路状态 + 重启定时器
+if (events & SAMPLESW_STATE_REPORT_EVT) {
+    zclSampleSw_ReportAllOnOffState();  // 上报 4 路 OnOff
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT, STATE_REPORT_INTERVAL_MS);
+}
+```
+
+### 上报函数
+
+```c
+static void zclSampleSw_ReportAllOnOffState(void)
+{
+    uint8 i;
+    for (i = 0; i < SAMPLESW_NUM_RELAYS; i++) {
+        zclSampleSw_ReportOnOffState(i);  // 依次上报 4 路
+    }
+}
+```
+
+### 效果
+
+- **BUG-007 修复**: 断电恢复后, 设备入网瞬间 Z2M 立即收到 4 路状态, 无需任何操作
+- **BUG-008 修复**: 即使某次本地操作时信号不好导致 Z2M 未收到上报, 信号恢复后最多 30 秒内 Z2M 自动同步到正确状态
