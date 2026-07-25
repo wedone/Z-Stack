@@ -4,6 +4,66 @@
 
 ---
 
+## v0.2.4 - 2026-07-25
+
+修复 S1 长按复位流程中的 LED 异常问题。根因是应用层直接操作 P0_0 绕过 HalLed 层导致 HalLedState 与硬件状态不一致，以及 HalLedBlink 闪烁参数过快（50ms on/200ms off，1秒内完成5次闪烁，视觉上只剩3次）。同时排查到 z2m 日志无离网请求是因 bdb_resetLocalAction() 在设备不在网络时直接重启不发送 NLME_LeaveReq。
+
+### Fixed
+- BUG-011-1: LED1 在无操作一段时间后自动熄灭（z2m 显示 OFF 时 LED1 应亮）。根因是应用层直接操作 P0_0 绕过 HalLed 层，HalLedState 与硬件状态不一致。修复：在触摸轮询中每 100ms 调用 `zclSampleSw_UpdateAllRelayOutputs()` 进行防御性刷新，确保即使被协议栈残留代码干扰也能快速恢复正确状态。
+- BUG-011-2: 长按 S1 5秒复位时 LED 闪烁频率过快（5次闪烁看起来只有3次）。根因是 `HalLedBlink(HAL_LED_ALL, 5, 50, 200)` 在 1 秒内完成。修复：实现自定义闪烁状态机 `zclSampleSw_StartResetBlink()` + `zclSampleSw_ProcessResetBlink()`，3次闪烁（6次状态切换），300ms亮/300ms灭，共 1.8 秒，直接操作 GPIO 绕过 HalLed 层。
+- BUG-011-3: 长按 S1 复位时 z2m 日志未显示 Zigbee 网络离开请求。根因是设备不在网络时 `bdb_resetLocalAction()` 直接 `ZDApp_ResetTimerStart(500)` 不发送 NLME_LeaveReq。修复：闪烁完成后显式调用 `bdb_resetLocalAction()`，由协议栈根据网络状态自动决定发送 NLME_LeaveReq 或直接重启。
+
+### Changed
+- 新增 `SAMPLESW_RESET_BLINK_EVT` (0x0040) 事件定义（zcl_samplesw.h）
+- 新增 `RESET_BLINK_TOTAL_COUNT` (6) 和 `RESET_BLINK_PERIOD_MS` (300) 宏定义
+- 新增 `resetBlinkCount` 状态机计数器
+- 新增 `zclSampleSw_StartResetBlink()` 和 `zclSampleSw_ProcessResetBlink()` 函数实现
+- 修改 S1 长按检测：检测到 5 秒长按后启动闪烁状态机，停止触摸轮询避免干扰
+- 新增每 100ms 防御性刷新 LED 状态（在 `zclSampleSw_ProcessTouchPoll()` 末尾）
+- 版本号递增: v0.2.3 → v0.2.4 (BUG修复, 修订号递增)
+
+### 设计决策
+- **为何不用 HalLedBlink**: HalLedBlink 会修改 HalLedState 全局变量，与应用层直接 GPIO 操作冲突，导致状态不一致。自定义状态机直接操作 P0_0，完全绕过 HalLed 层。
+- **为何保留 bdb_resetLocalAction() 调用**: 让协议栈自动判断设备网络状态，统一处理离网请求和重启流程，避免应用层重复实现协议栈逻辑。
+- **防御性刷新的必要性**: Z-Stack 官方示例的 hal_key.c 残留代码存在 P2.0（继电器4）和 P0.6（触摸输入3）引脚冲突，会周期性干扰 GPIO。防御性刷新确保 LED 状态在被干扰后能快速恢复。
+
+### 已知限制
+- 本次修复采用防御性刷新缓解 LED 异常，未根除 hal_key.c 残留代码干扰（将在 v1.0.0 深度重构中彻底清理）
+
+### Migration
+- 烧录 v0.2.4 后，LED1 在待机状态下应保持稳定显示继电器状态
+- 长按 S1 5 秒后会看到清晰的 3 次 LED1 闪烁（约 1.8 秒），然后设备执行复位
+- 若设备在网络中，z2m 日志应显示 Zigbee 网络离开请求
+
+---
+
+## v0.2.3 - 2026-07-25
+
+修复无操作时 Z2M 周期性收到 action 事件的 BUG。根因是 v0.2.1 引入的 30 秒周期性上报机制触发 z2m 的 `state_action` 选项，每次上报都生成无意义的 action 事件。
+
+### Fixed
+- BUG-010: 无操作时 Z2M 每 30 秒收到 4 个 action 事件 (on_l1/on_l2/on_l3/on_l4)。v0.2.1 为修复信号丢失导致状态失同步 (BUG-008) 引入了 `SAMPLESW_STATE_REPORT_EVT` 30 秒周期性上报。但 z2m 的 `fz.on_off` 转换器在 `state_action: true` 选项启用时, 会把每次 OnOff 属性上报转换为 action 事件。即使状态未变化, 周期性上报也会触发无意义的 action, 干扰 HA 自动化。
+
+### Changed
+- 移除 `SAMPLESW_STATE_REPORT_EVT` (0x2000) 事件定义和事件处理
+- 移除 `STATE_REPORT_INTERVAL_MS` (30000ms) 宏定义
+- 移除 `ZDO_STATE_CHANGE` 入网成功后启动周期定时器的代码
+- 保留 `ZDO_STATE_CHANGE` 入网成功后立即上报 (BUG-007 修复)
+- 保留触摸/远程操作后的立即上报 (BUG-002 修复)
+- 版本号递增: v0.2.2 → v0.2.3 (BUG修复, 修订号递增)
+
+### Trade-offs
+- 信号瞬时不好导致 Report 丢失时, 不再有 30 秒周期性上报自动恢复状态
+- 状态同步保障改为: 1) 入网后立即上报 2) 触摸/远程操作后立即上报 3) z2m availability 检测
+- 实际影响: 若 Report 丢失, 下次操作时会重新上报恢复同步; 信号持续不好时设备亦无法响应 Z2M 命令, 周期性上报也无法解决
+
+### Migration
+- 烧录 v0.2.3 后, 无操作时 Z2M 不再收到 action 事件
+- 若用户依赖周期性 action 触发 HA 自动化, 需改为基于 state 变化或操作触发的 action
+- z2m 的 `state_action` 选项仍可保留启用, 仅在状态变化时才会生成 action
+
+---
+
 ## v0.2.2 - 2026-07-25
 
 修复断电恢复时 4 路开关全部为 ON 的严重 BUG。根因是 startUpOnOff 配置 4 路共用一个全局变量，Z2M 写入 4 路独立配置时被互相覆盖。

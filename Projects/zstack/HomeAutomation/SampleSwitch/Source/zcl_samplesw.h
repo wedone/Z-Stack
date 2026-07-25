@@ -87,6 +87,10 @@ extern "C"
 // 断电记忆: 延迟写入NV事件 (状态变化后5秒写入, 减少Flash磨损)
 #define SAMPLESW_NV_SAVE_EVT                0x0008
 
+// S1长按复位LED闪烁事件 (BUG-011修复: 替代HalLedBlink, 避免HalLedState不一致)
+// 3次闪烁, 300ms亮/300ms灭, 共1.8秒, 闪烁结束后执行复位
+#define SAMPLESW_RESET_BLINK_EVT            0x0040
+
 // NV存储项ID (应用自定义, 避开Z-Stack系统区0x0001~0x0097和ZNP保留区0x0F01~0x0F07)
 #define SAMPLESW_NV_ID_RELAY_STATE          0x0F10  // 4路继电器状态
 #define SAMPLESW_NV_ID_STARTUP_ONOFF        0x0F12  // 4路独立startUpOnOff配置 (v0.2.2起, 避开v0.2.1的1字节旧ID 0x0F11)

@@ -358,3 +358,207 @@ zclSampleSw_RelayAttrs_ep4[] = { ..., &zclSampleSw_StartUpOnOff[3] };
 - `zcl_samplesw.h`: `zclSampleSw_StartUpOnOff` extern 声明改为数组, NV ID 改为 0x0F12
 - `zcl_samplesw_data.c`: `zclSampleSw_StartUpOnOff` 定义改为数组, 4 个 EP 属性表分别指向独立元素
 - `zcl_samplesw.c`: `startupOnOffCached` 改数组, `NvInit`/`NvLoadPowerOnState`/`NvProcessSave`/`ProcessTouchPoll` 适配 4 路独立
+
+---
+
+## BUG-010: 无操作时 Z2M 周期性收到 action 事件
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-25 |
+| **版本** | v0.2.3 |
+| **commit** | 待提交 |
+| **严重度** | 中 - 干扰 HA 自动化, 误触发 action |
+
+### 现象
+
+1. 设备 0x00124b000337c11c 入网后, 用户无任何操作
+2. Z2M 日志显示每 30 秒收到 4 个 action 事件: `on_l1`, `on_l2`, `on_l3`, `on_l4`
+3. 同时 `state_l1~l4` 保持 `ON` 不变 (状态实际未变化)
+4. MQTT topic `z2m/0x00124b000337c11c/action` 周期性发布, 干扰基于 action 的 HA 自动化
+
+### 根因
+
+v0.2.1 为修复 BUG-008 (信号丢失导致状态失同步) 引入了 `SAMPLESW_STATE_REPORT_EVT` 30 秒周期性上报机制, 无条件上报所有 4 路 OnOff 属性。
+
+z2m 的 `fz.on_off` 转换器 (位于 `zigbee-herdsman-converters/src/converters/fromZigbee.ts`) 行为:
+
+```typescript
+export const on_off: Fz.Converter<"genOnOff", undefined, ["attributeReport", "readResponse"]> = {
+    cluster: "genOnOff",
+    type: ["attributeReport", "readResponse"],
+    options: [exposes.options.state_action()],
+    convert: (model, msg, publish, options, meta) => {
+        if (msg.data.onOff !== undefined) {
+            const payload: KeyValueAny = {};
+            const property = postfixWithEndpointName("state", msg, model, meta);
+            const state = msg.data.onOff === 1 ? "ON" : "OFF";
+            payload[property] = state;
+            if (options?.state_action) {
+                payload.action = postfixWithEndpointName(state.toLowerCase(), msg, model, meta);
+            }
+            return payload;
+        }
+    },
+};
+```
+
+当 z2m 设备选项 `state_action: true` 启用时, 每次收到 OnOff 属性上报 (即使是相同值) 都会生成 action 事件。固件每 30 秒上报 onOff=true, z2m 每次都生成 `action: on_l1~l4`, 即使 state 实际未变化。
+
+`state_action` 选项默认为 false, 但用户可能为 HA 自动化启用。固件不应在状态未变化时主动上报, 否则无论 state_action 是否启用都会产生副作用。
+
+### 修复方案
+
+移除 30 秒周期性上报机制:
+
+1. 移除 `SAMPLESW_STATE_REPORT_EVT` (0x2000) 事件定义
+2. 移除 `STATE_REPORT_INTERVAL_MS` (30000ms) 宏定义
+3. 移除 `ZDO_STATE_CHANGE` 入网成功后启动周期定时器的代码
+4. 移除 `zclSampleSw_event_loop` 中 `SAMPLESW_STATE_REPORT_EVT` 事件处理
+
+保留的状态同步机制:
+- **入网后立即上报** (BUG-007 修复): `ZDO_STATE_CHANGE` 转 `DEV_ROUTER` 时调用 `zclSampleSw_ReportAllOnOffState()`
+- **触摸/远程操作后立即上报** (BUG-002 修复): `zclSampleSw_ToggleRelay()` 和 `zclSampleSw_HandleOnOffCmd()` 中调用 `zclSampleSw_ReportOnOffState()`
+- **z2m availability 检测**: z2m 默认检测设备在线状态
+
+### Trade-offs
+
+- **失去**: 信号瞬时不好导致 Report 丢失时, 30 秒后自动恢复同步的能力
+- **保留**: 状态变化时立即上报, 下次操作时恢复同步
+- **实际影响**: 若 Report 丢失, 下次操作时会重新上报恢复同步; 信号持续不好时设备亦无法响应 Z2M 命令, 周期性上报也无法解决
+
+### 涉及文件
+
+- `zcl_samplesw.c`: 移除 `SAMPLESW_STATE_REPORT_EVT` 和 `STATE_REPORT_INTERVAL_MS` 定义, 移除 `ZDO_STATE_CHANGE` 中定时器启动代码, 移除 `zclSampleSw_event_loop` 中事件处理
+- `zcl_samplesw_data.c`: 版本号 v0.2.2 → v0.2.3
+
+---
+
+## BUG-011: S1 长按复位 LED 异常 + z2m 无离网日志
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-25 |
+| **版本** | v0.2.4 |
+| **commit** | 待提交 |
+| **严重度** | 中 - 影响复位流程可视性, LED 状态异常影响用户体验 |
+
+### 现象
+
+1. **LED1 自动熄灭**: 设备入网后无操作一段时间(约1分钟), LED1 自动熄灭。但 z2m 显示状态为 OFF, 对应 LED1 应该常亮(继电器 OFF → LED 亮)。
+2. **长按 S1 闪烁过快**: 长按 S1 5 秒触发复位流程, LED 闪烁 5 次的设定看起来只有 3 次, 闪烁频率过快。
+3. **z2m 无离网日志**: 长按 S1 复位时, z2m 日志未显示 Zigbee 网络离开请求, 设备直接消失。
+
+### 根因
+
+#### BUG-011-1: LED1 自动熄灭
+
+应用层 `zclSampleSw_UpdateRelayOutput()` 直接操作 P0_0 控制 LED1, 绕过 HalLed 层。但 Z-Stack 协议栈残留代码(尤其 `hal_key.c` 的 `HalKeyPoll()` 每 100ms 轮询)会间接干扰 GPIO 状态:
+
+- `hal_key.c` 将 P2.0(继电器4引脚)定义为摇杆移动输入, 每 100ms 读取 P2.0 状态
+- 当继电器4 OFF (P2.0=1) 时, 触发 `halGetJoyKeyInput()` 调用 `HalAdcRead(HAL_KEY_JOY_CHN, ...)` 读取 P0.6(触摸输入3) 的 ADC 值
+- `HalAdcRead` 临时修改 `ADCCFG` 寄存器, 可能通过电气干扰影响 P0.0 状态
+- 应用层直接操作 GPIO 不更新 `HalLedState` 全局变量, 导致 HalLed 层状态与硬件状态不一致
+
+#### BUG-011-2: 长按 S1 闪烁过快
+
+原代码使用 `HalLedBlink(HAL_LED_ALL, 5, 50, 200)`:
+- `noOfCycles=5`: 5 次闪烁
+- `cycleTime=50`: 50ms 亮
+- `dutyCycle=200`: 200ms 灭
+
+总时长 = 5 × (50 + 200) = 1250ms, 但 50ms 亮的时间太短, 人眼视觉残留导致看起来只有 3 次。
+
+#### BUG-011-3: z2m 无离网日志
+
+`bdb_resetLocalAction()` 函数逻辑:
+
+```c
+void bdb_resetLocalAction(void)
+{
+  if((ZG_BUILD_JOINING_TYPE) && (bdbAttributes.bdbNodeIsOnANetwork) && ...)
+  {
+    // 设备在网络中: 发送 NLME_LeaveReq
+    NLME_LeaveReq( &leaveReq );
+    return;
+  }
+  else
+  {
+    // 设备不在网络中: 直接重启, 不发送 NLME_LeaveReq
+    bdb_setFN();
+    ZDApp_ResetTimerStart( 500 );
+  }
+}
+```
+
+若设备已离网或网络状态异常, `bdbAttributes.bdbNodeIsOnANetwork` 为 false, 走 else 分支直接重启, z2m 看不到离网请求。
+
+### 修复方案
+
+#### 1. 防御性 LED 刷新(缓解 BUG-011-1)
+
+在 `zclSampleSw_ProcessTouchPoll()` 末尾添加每 100ms 调用 `zclSampleSw_UpdateAllRelayOutputs()` 刷新所有 LED 状态:
+
+```c
+// BUG-011修复: 防御性刷新LED状态 (每100ms)
+// Z-Stack协议栈残留代码可能意外修改P0_0~P0_3, 定期刷新确保LED正确显示继电器状态
+zclSampleSw_UpdateAllRelayOutputs();
+```
+
+#### 2. 自定义闪烁状态机(修复 BUG-011-2)
+
+实现 `zclSampleSw_StartResetBlink()` 和 `zclSampleSw_ProcessResetBlink()` 函数, 替代 `HalLedBlink`:
+
+```c
+#define RESET_BLINK_TOTAL_COUNT   6    // 3次闪烁 = 6次状态切换
+#define RESET_BLINK_PERIOD_MS     300  // 每次亮或灭的持续时间
+
+static void zclSampleSw_StartResetBlink(void)
+{
+  resetBlinkCount = RESET_BLINK_TOTAL_COUNT;
+  P0_0 = 0;  // 直接操作GPIO, 绕过HalLed层
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_RESET_BLINK_EVT, RESET_BLINK_PERIOD_MS);
+}
+
+static void zclSampleSw_ProcessResetBlink(void)
+{
+  resetBlinkCount--;
+  if (resetBlinkCount > 0)
+  {
+    P0_0 = (resetBlinkCount % 2) ? 1 : 0;
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_RESET_BLINK_EVT, RESET_BLINK_PERIOD_MS);
+  }
+  else
+  {
+    // 闪烁完成, 执行复位
+    zclSampleSw_BasicResetCB();
+    bdb_resetLocalAction();
+    zclSampleSw_UpdateAllRelayOutputs();
+  }
+}
+```
+
+闪烁序列: 亮(启动)→灭→亮→灭→亮→灭(完成) = 3 次清晰闪烁, 每次 300ms, 共 1.8 秒。
+
+#### 3. 显式调用 bdb_resetLocalAction(修复 BUG-011-3)
+
+闪烁完成后显式调用 `bdb_resetLocalAction()`, 由协议栈根据网络状态自动决定:
+- 若设备在网络中: 发送 `NLME_LeaveReq`, z2m 日志会显示离网请求
+- 若设备不在网络中: 直接重启
+
+### 设计决策
+
+1. **为何不用 HalLedBlink**: HalLedBlink 会修改 `HalLedState` 全局变量, 与应用层直接 GPIO 操作冲突, 导致状态不一致。自定义状态机直接操作 P0_0, 完全绕过 HalLed 层。
+2. **为何保留 bdb_resetLocalAction() 调用**: 让协议栈自动判断设备网络状态, 统一处理离网请求和重启流程, 避免应用层重复实现协议栈逻辑。
+3. **防御性刷新的必要性**: Z-Stack 官方示例的 `hal_key.c` 残留代码存在 P2.0(继电器4)和 P0.6(触摸输入3)引脚冲突, 会周期性干扰 GPIO。防御性刷新确保 LED 状态在被干扰后能快速恢复。
+
+### 已知限制
+
+- 本次修复采用防御性刷新缓解 LED 异常, 未根除 `hal_key.c` 残留代码干扰
+- 将在 v1.0.0 深度重构中彻底清理: 禁用 `HAL_KEY` 模块, 剥离 UI/LCD 模块, 仅保留 4 路继电器开关必需代码
+
+### 涉及文件
+
+- `zcl_samplesw.h`: 新增 `SAMPLESW_RESET_BLINK_EVT` (0x0040) 事件定义
+- `zcl_samplesw.c`: 新增 `RESET_BLINK_TOTAL_COUNT`/`RESET_BLINK_PERIOD_MS` 宏, `resetBlinkCount` 变量, `zclSampleSw_StartResetBlink()`/`zclSampleSw_ProcessResetBlink()` 函数, 修改 S1 长按检测逻辑, 新增每 100ms 防御性刷新
+- `zcl_samplesw_data.c`: 版本号 v0.2.3 → v0.2.4

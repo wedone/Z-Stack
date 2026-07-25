@@ -162,9 +162,10 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
 #endif
 
 #define SAMPLESW_TOGGLE_TEST_EVT       0x1000
-// 状态同步: 周期性上报OnOff状态, 修复Z2M状态不同步(BUG-007/BUG-008)
-#define SAMPLESW_STATE_REPORT_EVT     0x2000
-#define STATE_REPORT_INTERVAL_MS       30000   // 状态上报周期 30秒
+// BUG-010修复: 移除30秒周期性上报(SAMPLESW_STATE_REPORT_EVT)
+// 原因: 周期性上报会触发z2m的state_action选项, 生成无意义的action事件(每30秒4个action)
+// 现方案: 仅在状态变化时(触摸/远程操作后)和入网后立即上报, 避免无操作时的action事件
+// 状态同步保障: z2m availability检测 + 下次操作时的立即上报
 
 /* ============================================================
  * 86四路智能开关硬件引脚映射 (参见 4路智能开关_Zigbee固件开发方案.md)
@@ -193,6 +194,13 @@ static uint8 touchPending[4]  = {0, 0, 0, 0};   // 各通道待确认的新电�
 // S1长按复位计数器 (每次触摸轮询+1, 达到S1_RESET_THRESHOLD执行复位)
 static uint8 s1HoldCount = 0;
 
+// BUG-011修复: S1复位LED闪烁状态机
+// 用直接GPIO操作替代HalLedBlink, 避免HalLedState与实际硬件状态不一致
+// 闪烁参数: 3次, 300ms亮/300ms灭, 共1.8秒
+#define RESET_BLINK_TOTAL_COUNT   6    // 3次闪烁 = 6次状态切换(亮/灭/亮/灭/亮/灭)
+#define RESET_BLINK_PERIOD_MS     300  // 每次亮或灭的持续时间
+static uint8 resetBlinkCount = 0;      // 闪烁状态机计数器(0~6)
+
 // 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改, 4路独立)
 static uint8 startupOnOffCached[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
 
@@ -206,6 +214,9 @@ static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bd
 
 // 86开关: 继电器/触摸/OnOff回调内部实现
 static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd);
+// BUG-011修复: S1复位闪烁状态机 (替代HalLedBlink)
+static void zclSampleSw_StartResetBlink(void);
+static void zclSampleSw_ProcessResetBlink(void);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
@@ -481,11 +492,11 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
           // 入网状态变化后重新刷新所有继电器/LED输出, 恢复正确显示。
           zclSampleSw_UpdateAllRelayOutputs();
           // 状态同步: 入网成功(DEV_ROUTER)后立即上报当前OnOff状态, 修复断电恢复后Z2M状态不同步(BUG-007)
-          // 同时启动周期性上报定时器, 修复信号丢失导致Z2M状态永久失同步(BUG-008)
+          // BUG-010修复: 移除30秒周期性上报定时器, 避免无操作时触发z2m state_action生成无意义action事件
+          // 状态同步改为依赖: 1)入网后立即上报 2)触摸/远程操作后立即上报 3)z2m availability检测
           if ((devStates_t)(MSGpkt->hdr.status) == DEV_ROUTER && zclSampleSw_NwkState != DEV_ROUTER)
           {
             zclSampleSw_ReportAllOnOffState();
-            osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT, STATE_REPORT_INTERVAL_MS);
           }
           zclSampleSw_NwkState = (devStates_t)(MSGpkt->hdr.status);
           break;
@@ -542,13 +553,17 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
     return ( events ^ SAMPLESW_NV_SAVE_EVT );
   }
 
-  // 状态同步: 周期性上报所有4路OnOff状态 (修复信号丢失导致Z2M状态永久失同步, BUG-008)
-  if ( events & SAMPLESW_STATE_REPORT_EVT )
+  // BUG-011修复: S1复位LED闪烁事件处理
+  // 用直接GPIO操作替代HalLedBlink, 避免HalLedState与硬件状态不一致
+  if ( events & SAMPLESW_RESET_BLINK_EVT )
   {
-    zclSampleSw_ReportAllOnOffState();
-    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT, STATE_REPORT_INTERVAL_MS);
-    return ( events ^ SAMPLESW_STATE_REPORT_EVT );
+    zclSampleSw_ProcessResetBlink();
+    return ( events ^ SAMPLESW_RESET_BLINK_EVT );
   }
+
+  // BUG-010修复: 移除SAMPLESW_STATE_REPORT_EVT周期性上报事件处理
+  // 原因: 30秒周期性上报会触发z2m state_action, 生成无意义action事件
+  // 状态同步改为依赖: 入网后立即上报 + 操作后立即上报 + z2m availability检测
 
   // Discard unknown events
   return 0;
@@ -946,6 +961,70 @@ static uint8 zclSampleSw_ReadTouchInputs(void)
 }
 
 /*********************************************************************
+ * @fn      zclSampleSw_StartResetBlink
+ *
+ * @brief   BUG-011修复: 启动S1复位LED闪烁状态机
+ *          替代HalLedBlink, 避免HalLedState与硬件状态不一致导致LED1异常
+ *          闪烁参数: 3次, 300ms亮/300ms灭, 共1.8秒, 完成后执行复位
+ *          仅操作LED1(P0_0), 不影响LED2~4(继电器状态指示)
+ *
+ * @return  none
+ */
+static void zclSampleSw_StartResetBlink(void)
+{
+  // 初始化闪烁状态机计数器
+  resetBlinkCount = RESET_BLINK_TOTAL_COUNT;
+
+  // 第1次切换: LED1亮(P0_0=0, 反逻辑)
+  // 直接操作GPIO, 不经过HalLed层, 避免HalLedState被修改
+  P0_0 = 0;
+
+  // 启动300ms定时器, 触发下一次切换
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_RESET_BLINK_EVT, RESET_BLINK_PERIOD_MS);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ProcessResetBlink
+ *
+ * @brief   BUG-011修复: S1复位LED闪烁状态机处理
+ *          每次切换LED1状态, 闪烁完成后执行复位流程
+ *          闪烁序列: 亮(启动)-灭-亮-灭-亮-灭(完成) = 3次闪烁
+ *          复位流程: Basic Reset + BDB Reset to FN(发送NLME_LeaveReq)
+ *
+ * @return  none
+ */
+static void zclSampleSw_ProcessResetBlink(void)
+{
+  resetBlinkCount--;
+
+  if (resetBlinkCount > 0)
+  {
+    // 切换LED1状态: 奇数count=灭(P0_0=1), 偶数count=亮(P0_0=0)
+    // count=5->灭, =4->亮, =3->灭, =2->亮, =1->灭 (共3次闪烁)
+    P0_0 = (resetBlinkCount % 2) ? 1 : 0;
+
+    // 启动下一次切换定时器
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_RESET_BLINK_EVT, RESET_BLINK_PERIOD_MS);
+  }
+  else
+  {
+    // 闪烁完成, 执行复位流程
+
+    // 1. 调用Basic Reset回调, 重置ZCL属性到默认值
+    zclSampleSw_BasicResetCB();
+
+    // 2. 调用BDB Reset to FN, 让协议栈处理网络离开请求
+    //    bdb_resetLocalAction()内部判断:
+    //    - 若设备在网络中: 发送NLME_LeaveReq(z2m日志会显示leave请求)
+    //    - 若设备不在网络中: 调用ZDApp_ResetTimerStart(500)直接重启
+    bdb_resetLocalAction();
+
+    // 3. 刷新所有继电器/LED状态到默认(继电器OFF, LED亮)
+    zclSampleSw_UpdateAllRelayOutputs();
+  }
+}
+
+/*********************************************************************
  * @fn      zclSampleSw_ProcessTouchPoll
  * @brief   触摸输入轮询处理, 包含软件防抖状态机
  *          检测到电平变化后需连续 TOUCH_DEBOUNCE_COUNTS 次(200ms)确认,
@@ -1011,9 +1090,12 @@ void zclSampleSw_ProcessTouchPoll(void)
     if (s1HoldCount >= S1_RESET_THRESHOLD)
     {
       s1HoldCount = 0;
-      // LED闪烁提示后执行工厂复位(离开网络+清除配网状态)
-      HalLedBlink(HAL_LED_ALL, 5, 50, 200);
-      bdb_resetLocalAction();
+      // BUG-011修复: 启动LED闪烁状态机, 闪烁结束后执行复位
+      // 不再使用HalLedBlink(避免HalLedState不一致导致LED1异常)
+      zclSampleSw_StartResetBlink();
+      // 停止触摸轮询, 避免闪烁期间被干扰
+      osal_stop_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT);
+      return;  // 直接返回, 不重启轮询(由闪烁状态机接管)
     }
   }
   else
@@ -1028,6 +1110,10 @@ void zclSampleSw_ProcessTouchPoll(void)
     osal_memcpy(startupOnOffCached, zclSampleSw_StartUpOnOff, SAMPLESW_NUM_RELAYS);
     zclSampleSw_NvScheduleSave();
   }
+
+  // BUG-011修复: 防御性刷新LED状态 (每100ms)
+  // Z-Stack协议栈残留代码可能意外修改P0_0~P0_3, 定期刷新确保LED正确显示继电器状态
+  zclSampleSw_UpdateAllRelayOutputs();
 
   // 重新启动下一次轮询
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
