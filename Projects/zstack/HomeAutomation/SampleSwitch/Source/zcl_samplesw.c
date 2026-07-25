@@ -161,7 +161,10 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
 #define DEVICE_POLL_RATE                 8000   // Poll rate for end device
 #endif
 
-#define SAMPLESW_TOGGLE_TEST_EVT   0x1000
+#define SAMPLESW_TOGGLE_TEST_EVT       0x1000
+// 状态同步: 周期性上报OnOff状态, 修复Z2M状态不同步(BUG-007/BUG-008)
+#define SAMPLESW_STATE_REPORT_EVT     0x2000
+#define STATE_REPORT_INTERVAL_MS       30000   // 状态上报周期 30秒
 
 /* ============================================================
  * 86四路智能开关硬件引脚映射 (参见 4路智能开关_Zigbee固件开发方案.md)
@@ -206,6 +209,7 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
+static void zclSampleSw_ReportAllOnOffState(void);
 static void zclSampleSw_ReportInputState(uint8 idx);
 
 // 断电记忆: NV存储相关函数
@@ -476,6 +480,14 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
           // 86开关: 协议栈Router启动时会操作LED3/LED4(ZDApp.c), 覆盖继电器状态灯。
           // 入网状态变化后重新刷新所有继电器/LED输出, 恢复正确显示。
           zclSampleSw_UpdateAllRelayOutputs();
+          // 状态同步: 入网成功(DEV_ROUTER)后立即上报当前OnOff状态, 修复断电恢复后Z2M状态不同步(BUG-007)
+          // 同时启动周期性上报定时器, 修复信号丢失导致Z2M状态永久失同步(BUG-008)
+          if ((devStates_t)(MSGpkt->hdr.status) == DEV_ROUTER && zclSampleSw_NwkState != DEV_ROUTER)
+          {
+            zclSampleSw_ReportAllOnOffState();
+            osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT, STATE_REPORT_INTERVAL_MS);
+          }
+          zclSampleSw_NwkState = (devStates_t)(MSGpkt->hdr.status);
           break;
 
 #if defined (OTA_CLIENT) && (OTA_CLIENT == TRUE)
@@ -528,6 +540,14 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
   {
     zclSampleSw_NvProcessSave();
     return ( events ^ SAMPLESW_NV_SAVE_EVT );
+  }
+
+  // 状态同步: 周期性上报所有4路OnOff状态 (修复信号丢失导致Z2M状态永久失同步, BUG-008)
+  if ( events & SAMPLESW_STATE_REPORT_EVT )
+  {
+    zclSampleSw_ReportAllOnOffState();
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_STATE_REPORT_EVT, STATE_REPORT_INTERVAL_MS);
+    return ( events ^ SAMPLESW_STATE_REPORT_EVT );
   }
 
   // Discard unknown events
@@ -849,6 +869,22 @@ static void zclSampleSw_ReportOnOffState(uint8 idx)
                     reportCmd, ZCL_FRAME_SERVER_CLIENT_DIR, TRUE, zclSampleSwSeqNum++);
 
   osal_msg_deallocate((uint8 *)reportCmd);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ReportAllOnOffState
+ * @brief   向协调器上报所有4路继电器的OnOff状态
+ *          用于入网后立即同步状态(BUG-007)和周期性状态同步(BUG-008),
+ *          确保Z2M状态与设备实际状态一致, 即使某次Report丢失也能在下次周期恢复。
+ * @return  none
+ */
+static void zclSampleSw_ReportAllOnOffState(void)
+{
+  uint8 i;
+  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+  {
+    zclSampleSw_ReportOnOffState(i);
+  }
 }
 
 /*********************************************************************

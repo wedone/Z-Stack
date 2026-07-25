@@ -4,6 +4,25 @@
 
 ---
 
+## v0.2.1 - 2026-07-25
+
+修复 Z2M 状态与设备实际状态不同步的两个 BUG。新增入网后立即上报和周期性上报机制。
+
+### Fixed
+- BUG-007: 断电恢复后 Z2M 状态不同步。上电按 startUpOnOff 策略恢复继电器状态后未主动上报, Z2M 保持断电前记录的旧状态。新增 `ZDO_STATE_CHANGE` 转 `DEV_ROUTER` 时立即上报所有 4 路 OnOff 状态。
+- BUG-008: 信号瞬时不好导致 Z2M 状态永久失同步。ZCL Report 无 APS ACK 单向发送, 丢失后无重传, 信号恢复也无重新同步事件。新增 30 秒周期性上报 `SAMPLESW_STATE_REPORT_EVT`, 即使某次 Report 丢失也能在下次周期恢复。
+
+### Added
+- `zclSampleSw_ReportAllOnOffState()`: 一次性上报 4 路 OnOff 状态
+- `SAMPLESW_STATE_REPORT_EVT` (0x2000): 30 秒周期性状态上报事件
+- `ZDO_STATE_CHANGE` 入网成功后立即上报 + 启动周期定时器
+
+### Changed
+- 启用 `zclSampleSw_NwkState` 全局变量跟踪网络状态 (此前仅声明未赋值), 避免重复入网触发多次上报
+- 版本号递增: v0.2.0 → v0.2.1 (BUG修复, 修订号递增)
+
+---
+
 ## v0.2.0 - 2026-07-25
 
 新增断电记忆功能，设备断电后可恢复之前的继电器状态。换壳到 HGZB-4S 以获得 Z2M 内置 powerOnBehavior 支持，免 External Converter。

@@ -219,3 +219,77 @@ if (curBit) {
 ### 涉及文件
 
 - `zcl_samplesw.c`: 恢复`ReadTouchInputs()`、`ProcessTouchPoll()`、`InitGpio()`为方案A正式版
+
+---
+
+## BUG-007: 断电恢复后 Z2M 状态不同步
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-25 |
+| **版本** | v0.2.0 |
+| **commit** | 待提交 |
+| **严重度** | 中 - Z2M 状态与设备实际状态不一致 |
+
+### 现象
+
+1. 设置断电恢复策略为"关"(startUpOnOff=0x00)
+2. Z2M 和设备当前状态都为"开"
+3. 断电再上电后, 设备状态正确变为"关" (按 startUpOnOff 策略恢复)
+4. Z2M 状态一直保持"开", 不与设备实际状态同步
+
+### 根因
+
+上电流程中 `zclSampleSw_NvLoadPowerOnState()` 按 startUpOnOff 策略设置了 `zclSampleSw_RelayState[]` 并通过 `zclSampleSw_UpdateAllRelayOutputs()` 应用 GPIO, 但**全程未调用 `zclSampleSw_ReportOnOffState()` 主动上报新状态**。
+
+此外设备刚上电时还在重新加入网络, 即使想上报也会失败。而 `ZDO_STATE_CHANGE` 事件处理只刷新 GPIO, 未触发 OnOff 状态上报。Z2M 默认不主动 poll OnOff 属性, 故永久保持断电前记录的旧状态。
+
+### 修复方案
+
+在 `ZDO_STATE_CHANGE` 事件处理中, 当状态从非 `DEV_ROUTER` 切换到 `DEV_ROUTER` (即入网成功) 时:
+1. 立即调用 `zclSampleSw_ReportAllOnOffState()` 上报所有 4 路 OnOff 状态
+2. 启动 30 秒周期性上报定时器 `SAMPLESW_STATE_REPORT_EVT`
+
+启用 `zclSampleSw_NwkState` 全局变量跟踪网络状态, 避免重复入网触发多次上报。
+
+### 涉及文件
+
+- `zcl_samplesw.c`: `ZDO_STATE_CHANGE` 事件处理新增入网上报逻辑, 新增 `zclSampleSw_ReportAllOnOffState()` 函数
+
+---
+
+## BUG-008: 信号不好导致 Z2M 状态永久失同步
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-25 |
+| **版本** | v0.2.0 |
+| **commit** | 待提交 |
+| **严重度** | 中 - Z2M 状态与设备实际状态不一致 |
+
+### 现象
+
+1. Z2M 和设备都为"关"
+2. 设备本地操作(触摸)使继电器变为"开"
+3. 由于瞬时信号不好, Z2M 未收到上报, 状态保持"关"
+4. 信号恢复正常后, Z2M 状态仍一直为"关", 不会自动同步
+
+### 根因
+
+`zclSampleSw_ToggleRelay()` 调用 `zclSampleSw_ReportOnOffState()` 上报, 但 ZCL Report 是**无 APS ACK 的单向消息** (`disableDefaultRsp=TRUE` 仅禁用 ZCL 默认响应, 非 APS 层确认)。
+
+信号不好时 Report 丢失, 设备无感知不重传。即使信号恢复, 也没有事件触发重新上报当前状态。Z2M 端无定时 poll 机制, 状态永久错位。
+
+### 修复方案
+
+新增周期性状态上报机制:
+- 新增事件 `SAMPLESW_STATE_REPORT_EVT` (0x2000)
+- 新增宏 `STATE_REPORT_INTERVAL_MS = 30000` (30秒周期)
+- 在 `zclSampleSw_event_loop` 中处理该事件: 上报所有 4 路 OnOff 状态后重新启动定时器
+- 与 BUG-007 修复共用 `zclSampleSw_ReportAllOnOffState()` 函数, 入网时启动定时器
+
+这样即使某次 Report 丢失, 最多 30 秒后下次周期会重新同步状态。
+
+### 涉及文件
+
+- `zcl_samplesw.c`: 新增 `SAMPLESW_STATE_REPORT_EVT` 事件处理, 新增 `STATE_REPORT_INTERVAL_MS` 宏, 入网时启动周期定时器
