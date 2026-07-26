@@ -4,6 +4,33 @@
 
 ---
 
+## v1.0.3 - 2026-07-26
+
+修复端点冲突导致 z2m interview 失败和 linkquality 日志风暴（BUG-013）。
+
+### 根因
+`SAMPLESW_ENDPOINT` 原值为 8，与 `SAMPLESW_ENDPOINT_INPUT4` (=8) 冲突。init 时 EP8 被注册两次：
+1. 先注册为 switch（含 genBasic/genIdentify/genOnOffSwitchConfig cluster）
+2. 后注册为 input4（genAnalogInput cluster），覆盖了 switch 的 SimpleDescriptor
+
+z2m interview 时通过 SimpleDescriptor 查找 genBasic server cluster，EP8 已被覆盖为 input4，找不到 genBasic → interview 失败 → 反复重试 → 每秒 5-10 次 linkquality 更新风暴。
+
+### 修复
+将 `SAMPLESW_ENDPOINT` 从 8 改为 11，避开 EP1-8（继电器 EP1-4 + 输入状态 EP5-8）。
+
+### Changed
+- `SAMPLESW_ENDPOINT`: 8 → 11（避免与 `SAMPLESW_ENDPOINT_INPUT4` 冲突）
+
+### 影响
+- z2m 能在 EP11 上读取 genBasic 属性（ModelId/ManufacturerName/DateCode/SwBuildId 等），完成 interview
+- EP1-4 继电器端点（genOnOff）和 EP5-8 输入状态端点（genAnalogInput）不受影响
+- EP11 不在借壳 HGZB-4S 的 endpoints 映射（l1:1, l2:2, l3:3, l4:4）中，z2m 仅在 EP11 上读取 genBasic，不影响继电器控制
+
+### 历史背景
+此问题自 v0.2.x 起就存在。之前 z2m 偶尔能 interview 成功（时序相关），成功后风暴停止；失败时持续风暴。v1.0.3 通过修复端点冲突确保 interview 始终成功。
+
+---
+
 ## v1.0.2 - 2026-07-26
 
 优化触摸响应速度，将触摸轮询周期从 100ms 缩短到 50ms，触发延迟从 ~200ms 降到 ~100ms（接近 WTC6106BSI 触摸芯片 50-150ms 硬件响应极限），改善用户触摸体验。

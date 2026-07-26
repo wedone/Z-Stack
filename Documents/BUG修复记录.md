@@ -636,3 +636,85 @@ bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP);
 
 - **移除第三方代码时必须完整理解其副作用**: `UI_Init()` 名为 UI 初始化，实际还承担了 commissioning 启动职责。重构前应先 grep 所有 `bdb_StartCommissioning` 调用，确认入口点。
 - **协议栈启动入口需显式调用**: Z-Stack 不会自动启动 commissioning，应用层必须主动调用 `bdb_StartCommissioning()`。
+
+## BUG-013: z2m interview 失败 + linkquality 日志风暴
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-26 |
+| **版本** | v0.2.x~v1.0.2 (历史遗留问题) |
+| **commit** | 待提交 |
+| **严重度** | 高 - z2m 无法采访设备, 属性始终为 null, linkquality 每秒5-10次更新风暴 |
+
+### 现象
+
+1. 设备能入网 (z2m 能看到设备 IEEE 地址)
+2. z2m interview 一直不成功, `state_l1~l4` 和 `power_on_behavior_l1~l4` 始终为 `null`
+3. interview 过程中出现 linkquality 日志风暴, 每秒 5-10 次 MQTT publish (仅 linkquality 变化)
+4. 此问题自 v0.2.x 起就存在, 之前 z2m 偶尔能 interview 成功 (时序相关), 成功后风暴停止
+
+### 根因
+
+`SAMPLESW_ENDPOINT` 定义为 8, 与 `SAMPLESW_ENDPOINT_INPUT4` (=8) 冲突。`zclSampleSw_Init()` 中 EP8 被注册两次:
+
+```c
+// 第1次注册: EP8 作为 switch (含 genBasic/genIdentify/genOnOffSwitchConfig cluster)
+bdb_RegisterSimpleDescriptor( &zclSampleSw_SimpleDesc );  // SAMPLESW_ENDPOINT=8
+
+// ... 继电器 EP1-4 注册 ...
+
+// 第2次注册: EP8 作为 input4 (genAnalogInput cluster), 覆盖了 switch 的 SimpleDescriptor
+for (ep = 0; ep < SAMPLESW_NUM_INPUTS; ep++)
+{
+  bdb_RegisterSimpleDescriptor(&zclSampleSw_InputSimpleDesc[ep]);  // EP5,6,7,8
+}
+```
+
+z2m interview 流程:
+1. ZDO Active Ep Request → 获取端点列表 [1,2,3,4,5,6,7,8]
+2. 对每个端点发送 Simple Descriptor Request
+3. 查找含 `genBasic` server cluster 的端点 → **找不到** (EP8 已被覆盖为 input4)
+4. interview 失败 → 反复重试 → 每秒 5-10 次 Zigbee 通信 → linkquality 频繁更新 → MQTT publish 风暴
+
+注: genBasic 属性仍注册在 EP8 (通过 `zcl_registerAttrList(SAMPLESW_ENDPOINT, ...)`), 但 SimpleDescriptor 已被覆盖, z2m 不会在 EP8 上读取 genBasic (因为 SimpleDescriptor 显示 EP8 是 input4)。
+
+### 诊断过程
+
+1. 用户反馈 interview 失败 + linkquality 风暴
+2. 分析日志特征: linkquality 频繁变化但属性值为 null → z2m 在反复读取但失败
+3. 检查端点配置: 发现 `SAMPLESW_ENDPOINT=8` 与 `SAMPLESW_ENDPOINT_INPUT4=8` 冲突
+4. 确认 v0.2.4 也有此冲突 (历史遗留问题)
+5. 分析 z2m interview 流程: 通过 SimpleDescriptor 查找 genBasic → EP8 被覆盖 → 找不到 → 失败
+
+### 修复方案
+
+将 `SAMPLESW_ENDPOINT` 从 8 改为 11, 避开 EP1-8 (继电器 EP1-4 + 输入状态 EP5-8):
+
+```c
+// zcl_samplesw.h
+#define SAMPLESW_ENDPOINT               11  // 原为 8, 与 INPUT4 冲突
+```
+
+修复后端点布局:
+- EP1-4: 继电器 (genOnOff server)
+- EP5-8: 输入状态 (genAnalogInput server)
+- EP11: switch (genBasic/genIdentify/genOnOffSwitchConfig server) ← z2m 在此读取 genBasic
+
+### 影响评估
+
+- **z2m interview**: EP11 的 SimpleDescriptor 含 genBasic server, z2m 能正确采访
+- **继电器控制**: EP1-4 不受影响, z2m 仍通过 l1:1, l2:2, l3:3, l4:4 映射控制
+- **输入状态**: EP5-8 不受影响 (z2m 借壳 HGZB-4S 本就不识别 EP5-8)
+- **EP11 不在借壳映射中**: z2m 仅在 EP11 上读取 genBasic, 不影响继电器控制
+
+### 涉及文件
+
+- `zcl_samplesw.h`: `SAMPLESW_ENDPOINT` 8 → 11
+- `zcl_samplesw_data.c`: 版本号 v1.0.2 → v1.0.3
+
+### 经验教训
+
+- **端点号分配必须全局唯一**: 同一个端点被注册多次会导致 SimpleDescriptor 被覆盖, 协议栈不会报错但行为异常。
+- **switch 端点的 genBasic cluster 是 z2m interview 的关键**: z2m 通过 SimpleDescriptor 查找 genBasic server, 找不到则 interview 失败。
+- **interview 失败会导致日志风暴**: z2m 会反复重试 interview, 每次 Zigbee 通信都更新 linkquality, 造成 MQTT publish 风暴。
+- **时序相关的偶发成功是诊断陷阱**: 此问题偶发成功 (时序相关) 让人误以为是其他原因, 实际是端点冲突的确定性 bug。

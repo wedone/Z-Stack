@@ -55,7 +55,10 @@ extern "C"
 /*********************************************************************
  * CONSTANTS
  */
-#define SAMPLESW_ENDPOINT               8
+// v1.0.3修复BUG-013: 原SAMPLESW_ENDPOINT=8与SAMPLESW_ENDPOINT_INPUT4=8冲突,
+// 导致EP8的SimpleDescriptor被input4覆盖,z2m找不到genBasic cluster,interview失败.
+// 改为EP11避开EP1-8(继电器EP1-4 + 输入状态EP5-8),z2m在EP11上读取genBasic完成interview.
+#define SAMPLESW_ENDPOINT               11
 
 // 4路继电器端点 (EP 1-4, 对应 alab.switch 的 l1-l4)
 #define SAMPLESW_ENDPOINT_RELAY1        1
