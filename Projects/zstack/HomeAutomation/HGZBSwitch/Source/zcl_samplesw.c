@@ -173,11 +173,14 @@ devStates_t zclSampleSw_NwkState = DEV_INIT;
  *   S1配网按键 (低电平有效): P1_3
  * LED与继电器联动: 继电器OFF→LED亮(写0), 继电器ON→LED灭(写1)
  * ============================================================ */
-#define TOUCH_POLL_INTERVAL_MS    100       // 触摸轮询周期
-#define TOUCH_DEBOUNCE_COUNTS     2        // 连续2次(200ms)确认状态变化, 防抖
+// v1.0.2优化: 触摸轮询周期 100ms→50ms, 触发延迟从~200ms降到~100ms (接近WTC6106BSI硬件响应极限)
+// 抗干扰能力不变(仍需2次连续确认), CPU开销可忽略(4路GPIO读取极轻量)
+#define TOUCH_POLL_INTERVAL_MS    50        // 触摸轮询周期
+#define TOUCH_DEBOUNCE_COUNTS     2        // 连续2次(100ms)确认状态变化, 防抖
 
 // S1配网按键长按复位 (P1_3, 低电平有效)
-#define S1_RESET_THRESHOLD        50       // 5秒 = 50 * 100ms轮询周期
+// v1.0.2调整: 轮询周期50ms后, 阈值从50→100, 保持5秒长按触发复位
+#define S1_RESET_THRESHOLD        100      // 5秒 = 100 * 50ms轮询周期
 
 // 继电器引脚位掩码 (P1口: P1_0/P1_2/P1_6, P2口: P2_0)
 #define RELAY_P1_BV               (BV(0) | BV(2) | BV(6))
@@ -415,7 +418,7 @@ void zclSampleSw_Init( byte task_id )
   zclSampleSw_InitGpio();
   zclSampleSw_UpdateAllRelayOutputs();
 
-  // 86开关: 启动触摸输入轮询 (100ms周期, 内含软件防抖)
+  // 86开关: 启动触摸输入轮询 (50ms周期, 内含软件防抖)
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
   
 #ifdef ZCL_DIAGNOSTIC
@@ -532,7 +535,7 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
   // 已移除: SAMPLEAPP_LCD_AUTO_UPDATE_EVT 事件处理块 (含 UI_UpdateLcd 调用)
   // 已移除: SAMPLEAPP_KEY_AUTO_REPEAT_EVT 事件处理块 (含 UI_MainStateMachine 调用)
 
-  // 86开关: 触摸输入轮询事件 (100ms周期, 内含软件防抖)
+  // 86开关: 触摸输入轮询事件 (50ms周期, 内含软件防抖)
   if ( events & SAMPLESW_TOUCH_POLL_EVT )
   {
     zclSampleSw_ProcessTouchPoll();
@@ -1099,7 +1102,7 @@ void zclSampleSw_ProcessTouchPoll(void)
     s1HoldCount = 0;
   }
 
-  // 断电记忆: 检测Z2M远程修改的startUpOnOff属性 (100ms周期轮询, 4路独立)
+  // 断电记忆: 检测Z2M远程修改的startUpOnOff属性 (50ms周期轮询, 4路独立)
   // 若发现任一路变化, 调度延迟写入NV持久化新配置
   if (osal_memcmp(zclSampleSw_StartUpOnOff, startupOnOffCached, SAMPLESW_NUM_RELAYS) == FALSE)
   {
@@ -1107,7 +1110,7 @@ void zclSampleSw_ProcessTouchPoll(void)
     zclSampleSw_NvScheduleSave();
   }
 
-  // BUG-011修复: 防御性刷新LED状态 (每100ms)
+  // BUG-011修复: 防御性刷新LED状态 (每50ms, 跟随触摸轮询周期)
   // Z-Stack协议栈残留代码可能意外修改P0_0~P0_3, 定期刷新确保LED正确显示继电器状态
   zclSampleSw_UpdateAllRelayOutputs();
 
