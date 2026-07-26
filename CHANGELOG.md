@@ -4,6 +4,48 @@
 
 ---
 
+## v1.0.4 - 2026-07-26
+
+新增配网中LED1慢闪功能，遵循业界惯例提示用户设备正在配网。
+
+### 功能描述
+设备上电启动BDB commissioning后，LED1以1Hz频率慢闪（500ms亮/500ms灭），提示用户正在配网。入网成功或超时（5分钟）后停止慢闪，恢复LED1显示继电器1状态。
+
+### 行为定义
+| 阶段 | LED1行为 |
+|------|----------|
+| 上电启动 | 开始1Hz慢闪 |
+| 配网中（未入网） | 持续1Hz慢闪 |
+| 入网成功（DEV_ROUTER） | 立即停止慢闪，恢复继电器1状态显示 |
+| 配网超时（5分钟无入网） | 停止慢闪，恢复继电器1状态显示 |
+
+### 设计参考
+| 厂商 | 配网中LED行为 | 超时 |
+|------|-------------|------|
+| IKEA Tradfri | 慢闪（1Hz）| 60秒 |
+| Aqara | 快闪（2Hz）| 90秒 |
+| Tuya | 双闪 | 120秒 |
+| **本项目** | **慢闪（1Hz, IKEA风格）** | **5分钟** |
+
+选择1Hz慢闪（IKEA风格）而非快闪，是因为86开关使用场景下慢闪更柔和，且5分钟超时与BDB NWK_STEERING协议栈超时接近。
+
+### 实现要点
+- 新增事件 `SAMPLESW_PAIRING_BLINK_EVT` (0x0020)，复用已废弃的UI事件号
+- 新增状态机变量：`pairingBlinkActive`/`pairingBlinkLedOn`/`pairingBlinkTickCount`
+- 启动时机：`zclSampleSw_Init()` 末尾调用 `zclSampleSw_StartPairingBlink()`
+- 停止时机：`ZDO_STATE_CHANGE` 收到 `DEV_ROUTER` 时调用 `zclSampleSw_StopPairingBlink()`
+- 防干扰：`zclSampleSw_UpdateRelayOutput(0)` 在配网慢闪激活时跳过LED1刷新，避免防御性刷新干扰闪烁
+
+### Changed
+- `zcl_samplesw.h`: 新增 `SAMPLESW_PAIRING_BLINK_EVT` 和 `SAMPLESW_PAIRING_TIMEOUT_MS` 定义
+- `zcl_samplesw.c`: 新增 `zclSampleSw_StartPairingBlink`/`ProcessPairingBlink`/`StopPairingBlink` 三个函数
+- `zcl_samplesw.c`: `zclSampleSw_Init()` 末尾启动配网慢闪
+- `zcl_samplesw.c`: `ZDO_STATE_CHANGE` 处理中入网成功时停止配网慢闪
+- `zcl_samplesw.c`: `zclSampleSw_UpdateRelayOutput(0)` 配网慢闪激活时跳过LED1刷新
+- `zcl_samplesw_data.c`: 版本号 v1.0.3 → v1.0.4
+
+---
+
 ## v1.0.3 - 2026-07-26
 
 修复端点冲突导致 z2m interview 失败和 linkquality 日志风暴（BUG-013）。

@@ -202,6 +202,17 @@ static uint8 s1HoldCount = 0;
 #define RESET_BLINK_PERIOD_MS     300  // 每次亮或灭的持续时间
 static uint8 resetBlinkCount = 0;      // 闪烁状态机计数器(0~6)
 
+// v1.0.4新增: 配网中LED1慢闪状态机 (业界惯例, 提示用户正在配网)
+// 启动时机: zclSampleSw_Init()末尾, 设备未入网时启动
+// 停止时机: ZDO_STATE_CHANGE收到DEV_ROUTER(已入网) 或 超时(5分钟)
+// 闪烁参数: 1Hz, 500ms亮/500ms灭, 仅操作LED1(P0_0), 不影响继电器状态
+#define PAIRING_BLINK_PERIOD_MS   500  // 每次亮或灭的持续时间 (1Hz)
+static uint8 pairingBlinkActive = FALSE;  // 慢闪是否活跃
+static uint8 pairingBlinkLedOn = FALSE;   // 当前LED1是否亮(反逻辑: 0=亮)
+static uint16 pairingBlinkTickCount = 0;  // 已闪烁的tick数(每500ms+1, 用于超时判断)
+// 配网超时阈值: 5分钟 = 300秒 = 600个500ms tick
+#define PAIRING_BLINK_TIMEOUT_TICKS   (SAMPLESW_PAIRING_TIMEOUT_MS / PAIRING_BLINK_PERIOD_MS)
+
 // 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改, 4路独立)
 static uint8 startupOnOffCached[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
 
@@ -218,6 +229,10 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd);
 // BUG-011修复: S1复位闪烁状态机 (替代HalLedBlink)
 static void zclSampleSw_StartResetBlink(void);
 static void zclSampleSw_ProcessResetBlink(void);
+// v1.0.4新增: 配网中LED1慢闪状态机
+static void zclSampleSw_StartPairingBlink(void);
+static void zclSampleSw_ProcessPairingBlink(void);
+static void zclSampleSw_StopPairingBlink(void);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
@@ -448,6 +463,11 @@ void zclSampleSw_Init( byte task_id )
   //   - 已配网设备: 尝试rejoin恢复网络
   //   - 新设备: 触发BDB initialization后启动NWK_STEERING commissioning
   bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP);
+
+  // v1.0.4新增: 启动配网中LED1慢闪, 提示用户设备正在配网
+  // 已配网设备: BDB rejoin成功后ZDO_STATE_CHANGE会触发StopPairingBlink
+  // 新设备: 持续慢闪直到入网成功或5分钟超时
+  zclSampleSw_StartPairingBlink();
 }
 
 /*********************************************************************
@@ -500,6 +520,8 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
           // 状态同步改为依赖: 1)入网后立即上报 2)触摸/远程操作后立即上报 3)z2m availability检测
           if ((devStates_t)(MSGpkt->hdr.status) == DEV_ROUTER && zclSampleSw_NwkState != DEV_ROUTER)
           {
+            // v1.0.4新增: 入网成功, 停止配网中LED1慢闪
+            zclSampleSw_StopPairingBlink();
             zclSampleSw_ReportAllOnOffState();
           }
           zclSampleSw_NwkState = (devStates_t)(MSGpkt->hdr.status);
@@ -555,6 +577,14 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
   {
     zclSampleSw_ProcessResetBlink();
     return ( events ^ SAMPLESW_RESET_BLINK_EVT );
+  }
+
+  // v1.0.4新增: 配网中LED1慢闪事件处理
+  // 1Hz闪烁(500ms亮/500ms灭), 入网成功或超时(5分钟)后停止
+  if ( events & SAMPLESW_PAIRING_BLINK_EVT )
+  {
+    zclSampleSw_ProcessPairingBlink();
+    return ( events ^ SAMPLESW_PAIRING_BLINK_EVT );
   }
 
   // BUG-010修复: 移除SAMPLESW_STATE_REPORT_EVT周期性上报事件处理
@@ -634,7 +664,11 @@ void zclSampleSw_UpdateRelayOutput(uint8 idx)
   {
     case 0:
       P1_0 = on ? 0 : 1;        // 继电器1: ON=低电平
-      P0_0 = ledVal;            // LED1
+      // v1.0.4: 配网中LED1慢闪激活时, 不刷新LED1, 由慢闪状态机控制
+      if (!pairingBlinkActive)
+      {
+        P0_0 = ledVal;          // LED1
+      }
       break;
     case 1:
       P1_2 = on ? 0 : 1;        // 继电器2
@@ -1021,6 +1055,80 @@ static void zclSampleSw_ProcessResetBlink(void)
     // 3. 刷新所有继电器/LED状态到默认(继电器OFF, LED亮)
     zclSampleSw_UpdateAllRelayOutputs();
   }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_StartPairingBlink
+ * @brief   v1.0.4新增: 启动配网中LED1慢闪状态机
+ *          业界惯例: 设备配网中LED1慢闪(1Hz), 提示用户正在配网
+ *          停止条件: 1)ZDO_STATE_CHANGE收到DEV_ROUTER(入网成功)
+ *                   2)超时5分钟(SAMPLESW_PAIRING_TIMEOUT_MS)
+ *          仅操作LED1(P0_0), 不影响继电器状态和其他LED
+ * @return  none
+ */
+static void zclSampleSw_StartPairingBlink(void)
+{
+  pairingBlinkActive = TRUE;
+  pairingBlinkLedOn = FALSE;  // 初始为灭
+  pairingBlinkTickCount = 0;
+  // LED1亮(反逻辑: P0_0=0)
+  P0_0 = 0;
+  pairingBlinkLedOn = TRUE;
+  // 启动500ms定时器
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_PAIRING_BLINK_EVT, PAIRING_BLINK_PERIOD_MS);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_ProcessPairingBlink
+ * @brief   v1.0.4新增: 配网中LED1慢闪处理
+ *          每500ms切换LED1状态(亮/灭), 形成1Hz闪烁
+ *          超时5分钟后自动停止, 恢复LED1显示继电器1状态
+ * @return  none
+ */
+static void zclSampleSw_ProcessPairingBlink(void)
+{
+  if (!pairingBlinkActive) return;
+
+  pairingBlinkTickCount++;
+
+  // 超时检查: 5分钟无入网则停止慢闪
+  if (pairingBlinkTickCount >= PAIRING_BLINK_TIMEOUT_TICKS)
+  {
+    zclSampleSw_StopPairingBlink();
+    return;
+  }
+
+  // 切换LED1状态(反逻辑: 亮=0, 灭=1)
+  if (pairingBlinkLedOn)
+  {
+    P0_0 = 1;  // 灭
+    pairingBlinkLedOn = FALSE;
+  }
+  else
+  {
+    P0_0 = 0;  // 亮
+    pairingBlinkLedOn = TRUE;
+  }
+
+  // 重启500ms定时器
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_PAIRING_BLINK_EVT, PAIRING_BLINK_PERIOD_MS);
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_StopPairingBlink
+ * @brief   v1.0.4新增: 停止配网中LED1慢闪, 恢复LED1显示继电器1状态
+ *          由ZDO_STATE_CHANGE(DEV_ROUTER)或超时调用
+ * @return  none
+ */
+static void zclSampleSw_StopPairingBlink(void)
+{
+  if (!pairingBlinkActive) return;
+
+  pairingBlinkActive = FALSE;
+  osal_stop_timerEx(zclSampleSw_TaskID, SAMPLESW_PAIRING_BLINK_EVT);
+
+  // 恢复LED1显示继电器1状态
+  zclSampleSw_UpdateRelayOutput(0);
 }
 
 /*********************************************************************
