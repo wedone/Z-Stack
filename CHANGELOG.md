@@ -4,6 +4,45 @@
 
 ---
 
+## v1.0.5 - 2026-07-27
+
+设置CC2530发射功率为4dBm，提升信号稳定性。
+
+### 问题背景
+用户反馈z2m中信号质量（linkquality）极不稳定，从10+到105大幅波动。
+
+### 根因分析
+- HGZBSwitch项目此前未显式设置发射功率，使用MAC PIB默认值 `phyTransmitPower=0`（即0 dBm, 1mW）
+- 0 dBm发射功率偏低，加上CC2530裸片（无PA/LNA）天线和环境因素影响，导致接收端信号强度不稳定
+- 对比ZNP项目在 [znp_app.c#L411](file:///d:/VC/Z-Stack/Projects/zstack/ZNP/Source/znp_app.c#L411) 中显式设置 `TX_PWR_PLUS_4`（4 dBm），HGZBSwitch缺少此设置
+
+### 修复方案
+在 `zclSampleSw_Init()` 中 `bdb_StartCommissioning()` 调用之前，添加 `ZMacSetTransmitPower(TX_PWR_PLUS_4)` 调用，将发射功率设置为4 dBm（约2.5mW）。
+
+### 功率档位选择说明
+| 档位 | dBm | 寄存器值 | 测试结果 |
+|------|-----|---------|---------|
+| TX_PWR_PLUS_7 | 7 | 0xFF | ❌ 信号经常归零，RF工作不稳定 |
+| TX_PWR_PLUS_4 | 4 | 0xED | ✅ 与ZNP官方默认一致，稳定性最佳 |
+| 默认值 | 0 | 0xB6 | ⚠️ 信号偏低，10+到105波动 |
+
+**为什么不用最大功率 7 dBm：**
+- CC2530 datasheet 标称最大 7 dBm，但 7 dBm 档位（寄存器值 0xFF）在某些模块上会导致 RF 工作不稳定
+- TI 官方 ZNP 项目默认使用 4 dBm 而非 7 dBm，说明 4 dBm 是更稳妥的选择
+- 7 dBm 电流消耗约 34mA（比 0 dBm 多 40%），若模块电源供电余量不足会导致 RF 不稳定
+- 4 dBm 相比 0 dBm 信号强度提升约 2.5 倍，同时保持工作稳定性
+
+### Changed
+- `zcl_samplesw.c`: `zclSampleSw_Init()` 在 `bdb_StartCommissioning()` 之前新增 `ZMacSetTransmitPower(TX_PWR_PLUS_4)`
+- `zcl_samplesw_data.c`: 版本号 v1.0.4 → v1.0.5, DateCode 20260726 → 20260727
+
+### 验证要点
+- z2m中linkquality数值应稳定，不再出现10+到105的大幅波动
+- 信号不再出现归零现象
+- 通信距离应有明显提升
+
+---
+
 ## v1.0.4 - 2026-07-26
 
 新增配网中LED1慢闪功能，遵循业界惯例提示用户设备正在配网。

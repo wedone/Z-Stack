@@ -457,6 +457,15 @@ void zclSampleSw_Init( byte task_id )
   // v1.0.0重构: 移除UI模块调用 (无LCD/无物理按键)
   // 已移除: UI_Init(...) 与 UI_UpdateLcd()
 
+  // v1.0.5新增: 设置CC2530发射功率为 4 dBm (TX_PWR_PLUS_4)
+  // 原因: MAC PIB 默认 phyTransmitPower=0 (0 dBm, 1mW), 偏低导致信号不稳定
+  // 采用 4 dBm (约2.5mW), 与 TI 官方 ZNP 项目默认值一致 (znp_app.c:411)
+  // 注: CC2530裸片 datasheet 标称最大 7 dBm, 但 7 dBm (0xFF寄存器值) 在某些模块上
+  //     会导致 RF 工作不稳定 (信号经常归零), 4 dBm 是稳定性与功率的最佳平衡点
+  // 功率表参考: Components/mac/low_level/srf05/single_chip/mac_radio_defs.c
+  // 必须在 bdb_StartCommissioning() 之前调用, 确保入网时即使用设置后的发射功率
+  ZMacSetTransmitPower(TX_PWR_PLUS_4);
+
   // v1.0.0修复: UI模块剥离后, 需显式触发BDB commissioning启动Zigbee网络
   // 原本由 UI_Init() 内部调用 bdb_StartCommissioning(), 移除UI后应用层需自行启动
   // 参数 0x00 = BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP
