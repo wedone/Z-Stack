@@ -4,6 +4,51 @@
 
 ---
 
+## v1.0.6 - 2026-07-27
+
+降低LED状态灯亮度至50%，并真实化设备信息（借壳约束下显示真实厂商/型号/硬件版本）。
+
+### 问题背景
+1. **LED偏亮**: 实际使用中LED状态灯亮度偏高，刺眼，需降低到50%
+2. **设备信息不真实**: 借壳HGZB-4S后，Z2M显示厂商为`TexasInstruments`、硬件版本为`0`，与真实设备不符
+
+### LED亮度方案 (软件PWM)
+- LED1~4 在 P0_0~P0_3，CC2530 的 P0_0/P0_1 无硬件PWM能力
+- 采用软件PWM: **5ms周期(200Hz)**，50%占空比，人眼完全不可见闪烁
+- 引入`ledTargetOn[]`期望状态层，所有原直接`P0_x=val`写入改为`zclSampleSw_LedSetTarget()`调用
+- PWM定时器持续运行(200Hz)，配网慢闪/复位闪烁/继电器联动均经PWM层，亮度统一降至50%
+
+### ⚠️ 重要教训: OSAL定时器频率上限
+**初始方案用 2ms 周期(500Hz) 软件PWM，导致设备无法入网（z2m 无日志无设备信息）。**
+
+- **根因**: Z-Stack OSAL 是协作式调度，2ms 高频事件流过载 OSAL 队列，干扰 MAC 层时序（CSMA-CA 退避、ACK 等待、rejoin 流程），导致协议栈无法完成入网
+- **诊断过程**: 禁用 PWM 定时器后秒入网，确认是 PWM 频率问题
+- **频率测试**: 500Hz(2ms) 无法入网 → 200Hz(5ms) 秒入网，确认 5ms 为安全频率上限
+- **经验**: Z-Stack OSAL 应用层定时器周期**不建议 < 5ms**，否则会干扰协议栈 MAC 时序。200Hz PWM 人眼完全不可见闪烁，是软件 PWM 的安全频率
+
+### 设备信息真实化
+| 属性 | 旧值 | 新值 | 说明 |
+|------|------|------|------|
+| ManufacturerName | TexasInstruments | Linxee | 真实厂商 (ZCL字符串, 6字符) |
+| HWVersion | 0 | 1 | PCB v1.0 (uint8) |
+| SwBuildId | v1.0.5 | HA-SPA4C1-V1.0.6 | 型号+版本格式 (ZCL字符串, 16字符) |
+
+### Changed
+- `zcl_samplesw.h`: 新增 `SAMPLESW_LED_PWM_EVT`(0x0080) 和 `SAMPLESW_LED_PWM_PERIOD_MS`(5ms) 定义
+- `zcl_samplesw.c`: 新增 LED 软件 PWM 层 (`LedWriteGpio`/`LedSetTarget`/`LedPwmApply`)，启动 PWM 定时器
+- `zcl_samplesw.c`: `UpdateRelayOutput`/`StartResetBlink`/`ProcessResetBlink`/`StartPairingBlink`/`ProcessPairingBlink` 中直接 `P0_x` 写入改为 `LedSetTarget` 调用
+- `zcl_samplesw_data.c`: `SAMPLESW_HWVERSION` 0→1，`zclSampleSw_ManufacturerName` 改为 `Linxee`，`zclSampleSw_SwBuildId` 改为 `HA-SPA4C1-V1.0.6`
+
+### 验证要点
+- LED亮度明显降低，4路均匀，200Hz完全不可见闪烁
+- **秒入网**（500Hz 版本会无法入网，200Hz 版本正常）
+- 配网慢闪/复位闪烁仍正常工作，亮度50%
+- Z2M设备页: 厂商显示 `Linxee`，固件ID显示 `HA-SPA4C1-V1.0.6`，硬件显示 `1`
+- Z2M仍识别为 HGZB-4S，4路onOff正常控制
+- 触摸响应延迟无明显变化
+
+---
+
 ## v1.0.5 - 2026-07-27
 
 设置CC2530发射功率为4dBm，提升信号稳定性。

@@ -101,6 +101,13 @@ extern "C"
 // 业界惯例: IKEA 60秒, Aqara 90秒, Tuya 120秒; 此处取5分钟, 与BDB NWK_STEERING超时接近
 #define SAMPLESW_PAIRING_TIMEOUT_MS         (5 * 60 * 1000UL)
 
+// v1.0.6新增: LED软件PWM事件 (降低LED亮度至50%)
+// CC2530 P0_0/P0_1无硬件PWM, 采用软件PWM: 5ms周期(200Hz)
+// 50%占空比: pwmCounter 0/1交替, ==0时LED亮, ==1时LED灭
+// 注: 2ms(500Hz)会过载OSAL干扰协议栈MAC时序导致无法入网, 5ms(200Hz)验证可用
+#define SAMPLESW_LED_PWM_EVT                0x0080
+#define SAMPLESW_LED_PWM_PERIOD_MS          5       // PWM周期5ms = 200Hz
+
 // NV存储项ID (应用自定义, 避开Z-Stack系统区0x0001~0x0097和ZNP保留区0x0F01~0x0F07)
 #define SAMPLESW_NV_ID_RELAY_STATE          0x0F10  // 4路继电器状态
 #define SAMPLESW_NV_ID_STARTUP_ONOFF        0x0F12  // 4路独立startUpOnOff配置 (v0.2.2起, 避开v0.2.1的1字节旧ID 0x0F11)

@@ -31,12 +31,118 @@ Endpoint 8: genAnalogInput (第4路输入状态) → 触摸按键 4
 | 属性 | 值 | 说明 |
 |------|-----|------|
 | ModelIdentifier | `LXN-4S27LX1.0` | 借壳 HGZB-4S (LXN-4S27LX1.0)，Z2M 内置匹配 (长度前缀=14) |
-| ManufacturerName | `TexasInstruments` | 保持默认（zigbeeModel 匹配不检查此字段） |
+| ManufacturerName | `Linxee` | 真实厂商名 (长度前缀=6) |
 | DeviceID | `ZCL_HA_DEVICEID_ON_OFF_SWITCH` (0x0013) | Zigbee HA 标准开关 |
-| SwBuildId | `v0.2.2` | 固件版本号 |
-| DateCode | `20260725` | 编译日期 |
+| SwBuildId | `HA-SPA4C1-V1.0.6` | 真实型号+固件版本号 (长度前缀=16) |
+| DateCode | `20260727` | 编译日期 (长度前缀=8) |
+| HWVersion | `1` | 硬件版本 (PCB v1.0) |
 
 ZCL 字符串格式：`[长度字节][字符数据]`，长度前缀必须等于实际字符数，不能用空格填充。
+
+---
+
+## genBasic 属性总览
+
+> **借壳约束**: 本项目借壳 HGZB-4S (LXN-4S27LX1.0)，Z2M 通过 `ModelIdentifier` 匹配转换器。部分属性由固件上报，部分由转换器覆盖，部分不可改动。
+
+### 固件上报属性 (genBasic Cluster, EP1 完整属性)
+
+定义在 `zcl_samplesw_data.c`，通过 ZCL 属性表上报给 Z2M：
+
+| 属性 | AttrID | 变量名 | 行号 | 类型 | 当前值 | 可改? | 字符限制 |
+|------|--------|--------|------|------|--------|-------|----------|
+| **HWVersion** | 0x0003 | `zclSampleSw_HWRevision` | L72/L95 | uint8 | `1` | ✅ 可改, 0~255 | 整数, 无长度前缀 |
+| **ManufacturerName** | 0x0004 | `zclSampleSw_ManufacturerName` | L97 | ZCL字符串 | `Linxee` (6字符) | ✅ 可改 | ≤32字符 |
+| **ModelIdentifier** | 0x0005 | `zclSampleSw_ModelId` | L98 | ZCL字符串 | `LXN-4S27LX1.0` (13字符) | ❌ **不可改 — 借壳匹配键** | 改了就找不到转换器 |
+| **DateCode** | 0x0006 | `zclSampleSw_DateCode` | L101 | ZCL字符串 | `20260727` (8字符) | ✅ 可改, 每次发版更新 | ≤16字符 |
+| **SwBuildId** | 0x4000 | `zclSampleSw_SwBuildId` | L102 | ZCL字符串 | `HA-SPA4C1-V1.0.6` (16字符) | ✅ 可改, 每次发版更新 | ≤16字符 |
+| **PowerSource** | 0x0007 | `zclSampleSw_PowerSource` | L103 | ENUM8 | `1` (单相交流电) | ✅ 可改 | 标准枚举值 |
+
+### 各属性详细说明
+
+#### 1. HWVersion — "硬件"字段 (HA显示)
+
+```c
+// zcl_samplesw_data.c L72
+#define SAMPLESW_HWVERSION          1    // 0~255, 整数
+
+// zcl_samplesw_data.c L95
+const uint8 zclSampleSw_HWRevision = SAMPLESW_HWVERSION;
+```
+
+- 类型：`uint8`（0~255，**无长度前缀**）
+- HA 显示：`硬件: 1`
+- 当前值 `1` 表示 PCB v1.0
+
+#### 2. ManufacturerName — "厂商"字段 (Z2M设备页)
+
+```c
+// zcl_samplesw_data.c L97
+const uint8 zclSampleSw_ManufacturerName[] = { 6, 'L','i','n','x','e','e' };
+//                                          长度↑  ↑—— 6个字符 ——↑
+```
+
+- ZCL 字符串格式：`{ 长度字节, '字符1','字符2',... }`
+- 长度字节**必须等于**实际字符数
+- 显示位置：Z2M 设备页"厂商"字段
+- **注意**: HA 实体页的"制造商"显示 `Nue / 3A`，由转换器 `nue_3a.ts` 的 `vendor` 字段决定，固件无法控制
+
+#### 3. ModelIdentifier — "Zigbee型号"字段 (Z2M设备页)
+
+```c
+// zcl_samplesw_data.c L98 — ❌ 不可改
+const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X','1','.','0' };
+```
+
+- **借壳唯一匹配键**，Z2M 通过它与 HGZB-4S 转换器匹配
+- `nue_3a.ts` L102: `zigbeeModel: ["LXN-4S27LX1.0"]`
+- 改了 Z2M 找不到转换器，设备变"不支持的设备"
+
+#### 4. DateCode — "日期"字段 (Z2M设备页)
+
+```c
+// zcl_samplesw_data.c L101
+const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','7' };
+//                                      长度↑  ↑—— 8个字符 YYYYMMDD ——↑
+```
+
+- 格式：`YYYYMMDD`，每次发版更新为实际编译日期
+
+#### 5. SwBuildId — "固件ID"字段 (Z2M/HA设备页)
+
+```c
+// zcl_samplesw_data.c L102
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','V','1','.','0','.','6' };
+//                                       长度↑  ↑—— 16个字符 ——↑
+```
+
+- 格式：`型号-VX.Y.Z`，如 `HA-SPA4C1-V1.0.6`
+- 型号 `HA-SPA4C1` + 版本号 `V1.0.6`，共 16 字符（ZCL 字符串限制 ≤16）
+
+### 转换器覆盖项 (固件无法控制)
+
+以下字段由 `zigbee-herdsman-converters/src/devices/nue_3a.ts` 的转换器定义，固件上报的 ZCL 属性值被忽略：
+
+| 显示字段 | 固件属性 | Z2M 显示值 | 转换器来源 | 行号 |
+|----------|----------|-----------|-----------|------|
+| **型号** | ModelIdentifier | `HGZB-4S` | `nue_3a.ts` `model` | L103 |
+| **制造商(HA侧)** | ManufacturerName | `Nue / 3A` | `nue_3a.ts` `vendor` | L104 |
+| **描述** | — | `Smart light switch - 4 gang v2.0` | `nue_3a.ts` `description` | L105 |
+
+### ZCL 字符串改值规则
+
+```c
+// 正确: 长度=6, 6个字符
+const uint8 zclSampleSw_ManufacturerName[] = { 6, 'L','i','n','x','e','e' };
+
+// 正确: 长度=16, 16个字符
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','V','1','.','0','.','6' };
+
+// 错误: 长度与字符数不符
+const uint8 zclSampleSw_ManufacturerName[] = { 8, 'L','i','n','x','e','e' };  // 长度8但只有6字符
+```
+
+> 每次修改字符串值，**长度字节必须同步改为实际字符数**。详见 [固件版本更新规则.md](固件版本更新规则.md) ZCL字符串格式章节。
 
 ---
 

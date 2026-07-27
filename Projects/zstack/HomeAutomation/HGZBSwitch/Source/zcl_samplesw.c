@@ -213,6 +213,12 @@ static uint16 pairingBlinkTickCount = 0;  // 已闪烁的tick数(每500ms+1, 用
 // 配网超时阈值: 5分钟 = 300秒 = 600个500ms tick
 #define PAIRING_BLINK_TIMEOUT_TICKS   (SAMPLESW_PAIRING_TIMEOUT_MS / PAIRING_BLINK_PERIOD_MS)
 
+// v1.0.6新增: LED软件PWM状态 (50%占空比, 降低LED亮度)
+// ledTargetOn[i]=TRUE 表示期望LED亮(经PWM 50%导通), FALSE表示期望LED灭(全关)
+// idx 0~3 对应 LED1~4 (P0_0~P0_3), 反逻辑: TRUE=亮(写0), FALSE=灭(写1)
+static uint8 ledTargetOn[SAMPLESW_NUM_RELAYS] = {FALSE, FALSE, FALSE, FALSE};
+static uint8 ledPwmCounter = 0;  // PWM计数器(0/1交替, 50%占空比)
+
 // 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改, 4路独立)
 static uint8 startupOnOffCached[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
 
@@ -233,6 +239,10 @@ static void zclSampleSw_ProcessResetBlink(void);
 static void zclSampleSw_StartPairingBlink(void);
 static void zclSampleSw_ProcessPairingBlink(void);
 static void zclSampleSw_StopPairingBlink(void);
+// v1.0.6新增: LED软件PWM层 (50%占空比, 替代直接P0_x写入)
+static void zclSampleSw_LedWriteGpio(uint8 idx, uint8 on);
+static void zclSampleSw_LedSetTarget(uint8 idx, uint8 on);
+static void zclSampleSw_LedPwmApply(void);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
@@ -435,6 +445,11 @@ void zclSampleSw_Init( byte task_id )
 
   // 86开关: 启动触摸输入轮询 (50ms周期, 内含软件防抖)
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
+
+  // v1.0.6: 启动LED软件PWM定时器 (100Hz, 50%占空比, 降低LED亮度)
+  // 必须在UpdateAllRelayOutputs之后启动, 确保ledTargetOn已初始化
+  // 注: 2ms(500Hz)会过载OSAL干扰协议栈MAC时序, 10ms(100Hz)为安全上限
+  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_LED_PWM_EVT, SAMPLESW_LED_PWM_PERIOD_MS);
   
 #ifdef ZCL_DIAGNOSTIC
   // Register the application's callback function to read/write attribute data.
@@ -596,6 +611,15 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
     return ( events ^ SAMPLESW_PAIRING_BLINK_EVT );
   }
 
+  // v1.0.6新增: LED软件PWM事件处理 (500Hz, 50%占空比, 降低LED亮度)
+  // 持续运行, 每2ms应用一次PWM, 期望亮的LED以50%占空比导通
+  if ( events & SAMPLESW_LED_PWM_EVT )
+  {
+    zclSampleSw_LedPwmApply();
+    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_LED_PWM_EVT, SAMPLESW_LED_PWM_PERIOD_MS);
+    return ( events ^ SAMPLESW_LED_PWM_EVT );
+  }
+
   // BUG-010修复: 移除SAMPLESW_STATE_REPORT_EVT周期性上报事件处理
   // 原因: 30秒周期性上报会触发z2m state_action, 生成无意义action事件
   // 状态同步改为依赖: 入网后立即上报 + 操作后立即上报 + z2m availability检测
@@ -656,18 +680,82 @@ void zclSampleSw_InitGpio(void)
 }
 
 /*********************************************************************
+ * @fn      zclSampleSw_LedWriteGpio
+ *
+ * @brief   v1.0.6新增: LED底层GPIO写入 (反逻辑: on=TRUE→写0亮, on=FALSE→写1灭)
+ * @param   idx - LED索引 0~3 (LED1~4 → P0_0~P0_3)
+ * @param   on  - TRUE=亮, FALSE=灭
+ * @return  none
+ */
+static void zclSampleSw_LedWriteGpio(uint8 idx, uint8 on)
+{
+  uint8 val = on ? 0 : 1;   // 反逻辑: 亮=0, 灭=1
+  switch (idx)
+  {
+    case 0: P0_0 = val; break;
+    case 1: P0_1 = val; break;
+    case 2: P0_2 = val; break;
+    case 3: P0_3 = val; break;
+    default: break;
+  }
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_LedSetTarget
+ *
+ * @brief   v1.0.6新增: 设置LED期望亮灭状态 (替代直接P0_x=val)
+ *          所有LED控制点(继电器联动/配网慢闪/复位闪烁)统一调用本函数
+ * @param   idx - LED索引 0~3
+ * @param   on  - TRUE=期望亮(经PWM 50%导通), FALSE=期望灭(全关)
+ * @return  none
+ */
+static void zclSampleSw_LedSetTarget(uint8 idx, uint8 on)
+{
+  ledTargetOn[idx] = on;
+  // 立即应用一次, 避免等待下个PWM周期(最多2ms延迟)
+  zclSampleSw_LedPwmApply();
+}
+
+/*********************************************************************
+ * @fn      zclSampleSw_LedPwmApply
+ *
+ * @brief   v1.0.6新增: LED软件PWM应用 (由SAMPLESW_LED_PWM_EVT周期调用)
+ *          期望亮: 50%占空比(ledPwmCounter==0亮, ==1灭)
+ *          期望灭: 全关
+ *          ledPwmCounter 0/1交替, 形成500Hz/50%占空比PWM
+ * @return  none
+ */
+static void zclSampleSw_LedPwmApply(void)
+{
+  uint8 i;
+  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
+  {
+    if (ledTargetOn[i])
+    {
+      // 期望亮: 50%占空比 (counter==0导通, ==1关断)
+      zclSampleSw_LedWriteGpio(i, (ledPwmCounter == 0));
+    }
+    else
+    {
+      // 期望灭: 全关
+      zclSampleSw_LedWriteGpio(i, FALSE);
+    }
+  }
+  ledPwmCounter ^= 1;   // 0/1交替
+}
+
+/*********************************************************************
  * @fn      zclSampleSw_UpdateRelayOutput
  *
  * @brief   根据zclSampleSw_RelayState[idx]更新指定通道的继电器GPIO和LED状态
  *          继电器: ON=低电平触发吸合, OFF=高电平断开
- *          LED反逻辑: 继电器OFF→LED亮(写0), 继电器ON→LED灭(写1)
+ *          LED反逻辑: 继电器OFF→LED亮, 继电器ON→LED灭 (经PWM 50%亮度)
  * @param   idx - 继电器索引 0~3
  * @return  none
  */
 void zclSampleSw_UpdateRelayOutput(uint8 idx)
 {
   uint8 on = zclSampleSw_RelayState[idx];
-  uint8 ledVal = on ? 1 : 0;    // 反逻辑: 继电器ON→LED灭(写1), OFF→LED亮(写0)
 
   switch (idx)
   {
@@ -676,20 +764,20 @@ void zclSampleSw_UpdateRelayOutput(uint8 idx)
       // v1.0.4: 配网中LED1慢闪激活时, 不刷新LED1, 由慢闪状态机控制
       if (!pairingBlinkActive)
       {
-        P0_0 = ledVal;          // LED1
+        zclSampleSw_LedSetTarget(0, !on);   // LED1: 反逻辑 OFF→亮, ON→灭
       }
       break;
     case 1:
       P1_2 = on ? 0 : 1;        // 继电器2
-      P0_1 = ledVal;            // LED2
+      zclSampleSw_LedSetTarget(1, !on);     // LED2
       break;
     case 2:
       P1_6 = on ? 0 : 1;        // 继电器3
-      P0_2 = ledVal;            // LED3
+      zclSampleSw_LedSetTarget(2, !on);     // LED3
       break;
     case 3:
       P2_0 = on ? 0 : 1;        // 继电器4
-      P0_3 = ledVal;            // LED4
+      zclSampleSw_LedSetTarget(3, !on);     // LED4
       break;
     default:
       break;
@@ -1017,9 +1105,8 @@ static void zclSampleSw_StartResetBlink(void)
   // 初始化闪烁状态机计数器
   resetBlinkCount = RESET_BLINK_TOTAL_COUNT;
 
-  // 第1次切换: LED1亮(P0_0=0, 反逻辑)
-  // 直接操作GPIO, 不经过HalLed层, 避免HalLedState被修改
-  P0_0 = 0;
+  // 第1次切换: LED1亮 (经PWM层, 50%亮度)
+  zclSampleSw_LedSetTarget(0, TRUE);
 
   // 启动300ms定时器, 触发下一次切换
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_RESET_BLINK_EVT, RESET_BLINK_PERIOD_MS);
@@ -1041,9 +1128,9 @@ static void zclSampleSw_ProcessResetBlink(void)
 
   if (resetBlinkCount > 0)
   {
-    // 切换LED1状态: 奇数count=灭(P0_0=1), 偶数count=亮(P0_0=0)
+    // 切换LED1状态: 奇数count=灭, 偶数count=亮 (经PWM层, 50%亮度)
     // count=5->灭, =4->亮, =3->灭, =2->亮, =1->灭 (共3次闪烁)
-    P0_0 = (resetBlinkCount % 2) ? 1 : 0;
+    zclSampleSw_LedSetTarget(0, !(resetBlinkCount % 2));
 
     // 启动下一次切换定时器
     osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_RESET_BLINK_EVT, RESET_BLINK_PERIOD_MS);
@@ -1080,8 +1167,8 @@ static void zclSampleSw_StartPairingBlink(void)
   pairingBlinkActive = TRUE;
   pairingBlinkLedOn = FALSE;  // 初始为灭
   pairingBlinkTickCount = 0;
-  // LED1亮(反逻辑: P0_0=0)
-  P0_0 = 0;
+  // LED1亮 (经PWM层, 50%亮度)
+  zclSampleSw_LedSetTarget(0, TRUE);
   pairingBlinkLedOn = TRUE;
   // 启动500ms定时器
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_PAIRING_BLINK_EVT, PAIRING_BLINK_PERIOD_MS);
@@ -1107,15 +1194,15 @@ static void zclSampleSw_ProcessPairingBlink(void)
     return;
   }
 
-  // 切换LED1状态(反逻辑: 亮=0, 灭=1)
+  // 切换LED1状态 (经PWM层, 亮时50%亮度)
   if (pairingBlinkLedOn)
   {
-    P0_0 = 1;  // 灭
+    zclSampleSw_LedSetTarget(0, FALSE);  // 灭
     pairingBlinkLedOn = FALSE;
   }
   else
   {
-    P0_0 = 0;  // 亮
+    zclSampleSw_LedSetTarget(0, TRUE);   // 亮
     pairingBlinkLedOn = TRUE;
   }
 

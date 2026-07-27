@@ -94,12 +94,12 @@ const uint16 zclSampleSw_clusterRevision_all = 0x0001; //currently all cluster i
 // Basic Cluster
 const uint8 zclSampleSw_HWRevision = SAMPLESW_HWVERSION;
 const uint8 zclSampleSw_ZCLVersion = SAMPLESW_ZCLVERSION;
-const uint8 zclSampleSw_ManufacturerName[] = { 16, 'T','e','x','a','s','I','n','s','t','r','u','m','e','n','t','s' };
+const uint8 zclSampleSw_ManufacturerName[] = { 6, 'L','i','n','x','e','e' };
 const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X','1','.','0' };
 // DateCode: 固件编译日期 (ZCL DateCode 属性, 格式: YYYYMMDD)
-// SwBuildId: 固件版本号 (ZCL SwBuildId 属性, 格式: vX.Y.Z)
+// SwBuildId: 型号+版本号 (ZCL SwBuildId 属性, 格式: 型号-VX.Y.Z)
 const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','7' };
-const uint8 zclSampleSw_SwBuildId[] = { 6, 'v','1','.','0','.','5' };
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','V','1','.','0','.','6' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
 uint8 zclSampleSw_LocationDescription[17];
