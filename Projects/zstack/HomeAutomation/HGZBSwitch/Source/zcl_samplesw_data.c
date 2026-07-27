@@ -69,7 +69,10 @@
 #define SAMPLESW_DEVICE_VERSION     1
 #define SAMPLESW_FLAGS              0
 
-#define SAMPLESW_HWVERSION          0
+// v1.0.7: HW_VERSION 从 0 改为 2 (硬件版本号, ZCL ATTRID_BASIC_HW_VERSION)
+// 0=初始原型, 1=未使用, 2=当前量产硬件版本
+// v1.0.8: HW_VERSION 保持 2 不变
+#define SAMPLESW_HWVERSION          2
 #define SAMPLESW_ZCLVERSION         0
 
 #define DEFAULT_PHYSICAL_ENVIRONMENT 0
@@ -98,8 +101,8 @@ const uint8 zclSampleSw_ManufacturerName[] = { 6, 'L','i','n','x','e','e' };
 const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X','1','.','0' };
 // DateCode: 固件编译日期 (ZCL DateCode 属性, 格式: YYYYMMDD)
 // SwBuildId: 型号+版本号 (ZCL SwBuildId 属性, 格式: 型号-VX.Y.Z)
-const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','7' };
-const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','V','1','.','0','.','6' };
+const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','8' };
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','V','1','.','0','.','8' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
 uint8 zclSampleSw_LocationDescription[17];

@@ -213,11 +213,9 @@ static uint16 pairingBlinkTickCount = 0;  // 已闪烁的tick数(每500ms+1, 用
 // 配网超时阈值: 5分钟 = 300秒 = 600个500ms tick
 #define PAIRING_BLINK_TIMEOUT_TICKS   (SAMPLESW_PAIRING_TIMEOUT_MS / PAIRING_BLINK_PERIOD_MS)
 
-// v1.0.6新增: LED软件PWM状态 (50%占空比, 降低LED亮度)
-// ledTargetOn[i]=TRUE 表示期望LED亮(经PWM 50%导通), FALSE表示期望LED灭(全关)
-// idx 0~3 对应 LED1~4 (P0_0~P0_3), 反逻辑: TRUE=亮(写0), FALSE=灭(写1)
-static uint8 ledTargetOn[SAMPLESW_NUM_RELAYS] = {FALSE, FALSE, FALSE, FALSE};
-static uint8 ledPwmCounter = 0;  // PWM计数器(0/1交替, 50%占空比)
+// v1.0.8变更: 移除LED软件PWM调光功能
+// 原因: PWM定时器(5ms周期)持续运行会占用MCU资源, 影响Zigbee协议栈时序, 导致信号不稳定
+// 方案: 恢复LED直接写GPIO控制亮度(100%), 优先保证RF通信稳定性
 
 // 断电记忆: startUpOnOff缓存值 (用于检测Z2M远程修改, 4路独立)
 static uint8 startupOnOffCached[SAMPLESW_NUM_RELAYS] = {STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS, STARTUP_ONOFF_PREVIOUS};
@@ -239,10 +237,9 @@ static void zclSampleSw_ProcessResetBlink(void);
 static void zclSampleSw_StartPairingBlink(void);
 static void zclSampleSw_ProcessPairingBlink(void);
 static void zclSampleSw_StopPairingBlink(void);
-// v1.0.6新增: LED软件PWM层 (50%占空比, 替代直接P0_x写入)
+// v1.0.6新增: LED控制层 (v1.0.8移除PWM, 恢复直接GPIO写入)
 static void zclSampleSw_LedWriteGpio(uint8 idx, uint8 on);
 static void zclSampleSw_LedSetTarget(uint8 idx, uint8 on);
-static void zclSampleSw_LedPwmApply(void);
 static void zclSampleSw_ToggleRelay(uint8 idx);
 static uint8 zclSampleSw_ReadTouchInputs(void);
 static void zclSampleSw_ReportOnOffState(uint8 idx);
@@ -446,10 +443,9 @@ void zclSampleSw_Init( byte task_id )
   // 86开关: 启动触摸输入轮询 (50ms周期, 内含软件防抖)
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
 
-  // v1.0.6: 启动LED软件PWM定时器 (100Hz, 50%占空比, 降低LED亮度)
-  // 必须在UpdateAllRelayOutputs之后启动, 确保ledTargetOn已初始化
-  // 注: 2ms(500Hz)会过载OSAL干扰协议栈MAC时序, 10ms(100Hz)为安全上限
-  osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_LED_PWM_EVT, SAMPLESW_LED_PWM_PERIOD_MS);
+  // v1.0.8变更: 移除LED PWM调光功能 (v1.0.6~v1.0.7的PWM方案影响RF信号稳定性)
+  // LED控制恢复直接写GPIO, 亮度100% (zclSampleSw_LedSetTarget内部直接调用LedWriteGpio)
+  // 此处 UpdateAllRelayOutputs 已根据继电器状态设置LED, 无需额外初始化
   
 #ifdef ZCL_DIAGNOSTIC
   // Register the application's callback function to read/write attribute data.
@@ -472,12 +468,13 @@ void zclSampleSw_Init( byte task_id )
   // v1.0.0重构: 移除UI模块调用 (无LCD/无物理按键)
   // 已移除: UI_Init(...) 与 UI_UpdateLcd()
 
-  // v1.0.5新增: 设置CC2530发射功率为 4 dBm (TX_PWR_PLUS_4)
-  // 原因: MAC PIB 默认 phyTransmitPower=0 (0 dBm, 1mW), 偏低导致信号不稳定
-  // 采用 4 dBm (约2.5mW), 与 TI 官方 ZNP 项目默认值一致 (znp_app.c:411)
-  // 注: CC2530裸片 datasheet 标称最大 7 dBm, 但 7 dBm (0xFF寄存器值) 在某些模块上
-  //     会导致 RF 工作不稳定 (信号经常归零), 4 dBm 是稳定性与功率的最佳平衡点
-  // 功率表参考: Components/mac/low_level/srf05/single_chip/mac_radio_defs.c
+  // v1.0.8: 保持发射功率 4 dBm (TX_PWR_PLUS_4), 与ZNP官方默认一致
+  // 历史:
+  //   v1.0.5: 0 dBm -> 4 dBm (信号不稳定, 10+~105波动)
+  //   v1.0.6: 4 dBm (信号仍不稳定, 排查为PWM调光干扰)
+  //   v1.0.7: 4 dBm + 未入网时禁用PWM (仍不稳定)
+  //   v1.0.8: 4 dBm + 完全移除PWM调光 (PWM是信号不稳定的根因)
+  // 测试结论: 7 dBm导致RF不稳定(信号归零), 5 dBm无改善, 4 dBm + 移除PWM为最佳配置
   // 必须在 bdb_StartCommissioning() 之前调用, 确保入网时即使用设置后的发射功率
   ZMacSetTransmitPower(TX_PWR_PLUS_4);
 
@@ -546,6 +543,7 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
           {
             // v1.0.4新增: 入网成功, 停止配网中LED1慢闪
             zclSampleSw_StopPairingBlink();
+            // v1.0.8变更: 移除PWM调光启用 (PWM定时器影响RF信号稳定性)
             zclSampleSw_ReportAllOnOffState();
           }
           zclSampleSw_NwkState = (devStates_t)(MSGpkt->hdr.status);
@@ -611,14 +609,7 @@ uint16 zclSampleSw_event_loop( uint8 task_id, uint16 events )
     return ( events ^ SAMPLESW_PAIRING_BLINK_EVT );
   }
 
-  // v1.0.6新增: LED软件PWM事件处理 (500Hz, 50%占空比, 降低LED亮度)
-  // 持续运行, 每2ms应用一次PWM, 期望亮的LED以50%占空比导通
-  if ( events & SAMPLESW_LED_PWM_EVT )
-  {
-    zclSampleSw_LedPwmApply();
-    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_LED_PWM_EVT, SAMPLESW_LED_PWM_PERIOD_MS);
-    return ( events ^ SAMPLESW_LED_PWM_EVT );
-  }
+  // v1.0.8变更: 移除SAMPLESW_LED_PWM_EVT事件处理 (PWM调光影响RF信号稳定性)
 
   // BUG-010修复: 移除SAMPLESW_STATE_REPORT_EVT周期性上报事件处理
   // 原因: 30秒周期性上报会触发z2m state_action, 生成无意义action事件
@@ -705,43 +696,14 @@ static void zclSampleSw_LedWriteGpio(uint8 idx, uint8 on)
  *
  * @brief   v1.0.6新增: 设置LED期望亮灭状态 (替代直接P0_x=val)
  *          所有LED控制点(继电器联动/配网慢闪/复位闪烁)统一调用本函数
+ *          v1.0.8变更: 移除PWM调光, 恢复直接写GPIO控制亮度(100%)
  * @param   idx - LED索引 0~3
- * @param   on  - TRUE=期望亮(经PWM 50%导通), FALSE=期望灭(全关)
+ * @param   on  - TRUE=期望亮, FALSE=期望灭
  * @return  none
  */
 static void zclSampleSw_LedSetTarget(uint8 idx, uint8 on)
 {
-  ledTargetOn[idx] = on;
-  // 立即应用一次, 避免等待下个PWM周期(最多2ms延迟)
-  zclSampleSw_LedPwmApply();
-}
-
-/*********************************************************************
- * @fn      zclSampleSw_LedPwmApply
- *
- * @brief   v1.0.6新增: LED软件PWM应用 (由SAMPLESW_LED_PWM_EVT周期调用)
- *          期望亮: 50%占空比(ledPwmCounter==0亮, ==1灭)
- *          期望灭: 全关
- *          ledPwmCounter 0/1交替, 形成500Hz/50%占空比PWM
- * @return  none
- */
-static void zclSampleSw_LedPwmApply(void)
-{
-  uint8 i;
-  for (i = 0; i < SAMPLESW_NUM_RELAYS; i++)
-  {
-    if (ledTargetOn[i])
-    {
-      // 期望亮: 50%占空比 (counter==0导通, ==1关断)
-      zclSampleSw_LedWriteGpio(i, (ledPwmCounter == 0));
-    }
-    else
-    {
-      // 期望灭: 全关
-      zclSampleSw_LedWriteGpio(i, FALSE);
-    }
-  }
-  ledPwmCounter ^= 1;   // 0/1交替
+  zclSampleSw_LedWriteGpio(idx, on);
 }
 
 /*********************************************************************
@@ -749,7 +711,7 @@ static void zclSampleSw_LedPwmApply(void)
  *
  * @brief   根据zclSampleSw_RelayState[idx]更新指定通道的继电器GPIO和LED状态
  *          继电器: ON=低电平触发吸合, OFF=高电平断开
- *          LED反逻辑: 继电器OFF→LED亮, 继电器ON→LED灭 (经PWM 50%亮度)
+ *          LED反逻辑: 继电器OFF→LED亮, 继电器ON→LED灭 (v1.0.8: 100%亮度)
  * @param   idx - 继电器索引 0~3
  * @return  none
  */

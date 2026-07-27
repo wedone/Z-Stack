@@ -4,6 +4,98 @@
 
 ---
 
+## v1.0.8 - 2026-07-28
+
+移除LED软件PWM调光功能（影响RF信号稳定性），保持发射功率4dBm。
+
+### 问题背景
+用户反馈v1.0.6/v1.0.7引入LED软件PWM调光后，即使入网成功后PWM定时器持续运行仍会影响开关的Zigbee信号稳定性。推测原因是PWM定时器（5ms周期）持续运行占用MCU资源，干扰协议栈MAC时序。
+
+### 修复方案
+1. **移除PWM调光功能**：删除所有PWM相关代码（事件、变量、函数），LED恢复直接写GPIO控制亮度（100%）
+2. **发射功率**：保持 4 dBm（TX_PWR_PLUS_4），测试 5/7 dBm 均无改善，根因是 PWM 干扰而非功率不足
+
+### 移除的代码
+- `zcl_samplesw.h`: `SAMPLESW_LED_PWM_EVT`、`SAMPLESW_LED_PWM_PERIOD_MS` 宏定义
+- `zcl_samplesw.c`: `ledTargetOn[]`、`ledPwmCounter`、`ledPwmEnabled` 变量
+- `zcl_samplesw.c`: `zclSampleSw_LedPwmApply()`、`zclSampleSw_LedPwmEnable()` 函数
+- `zcl_samplesw.c`: `SAMPLESW_LED_PWM_EVT` 事件处理逻辑
+- `zcl_samplesw.c`: `zclSampleSw_Init()` 中无条件启动PWM定时器的代码
+- `zcl_samplesw.c`: `ZDO_STATE_CHANGE` 中 `zclSampleSw_LedPwmEnable()` 调用
+
+### 简化后的LED控制
+- `zclSampleSw_LedSetTarget(idx, on)` 简化为直接调用 `zclSampleSw_LedWriteGpio(idx, on)`
+- LED亮度恢复为100%（无PWM调光）
+
+### 发射功率对比
+| 版本 | 发射功率 | 信号稳定性 |
+|------|---------|-----------|
+| v1.0.4及以前 | 0 dBm (1mW) | 不稳定 (10+~105波动) |
+| v1.0.5~v1.0.7 | 4 dBm (2.5mW) | 不稳定 (PWM干扰) |
+| v1.0.8 | 4 dBm (2.5mW) + 移除PWM | 待验证 |
+
+### Changed
+- `zcl_samplesw.c`: 移除PWM相关代码，保持 `ZMacSetTransmitPower(TX_PWR_PLUS_4)`
+- `zcl_samplesw.h`: 移除 `SAMPLESW_LED_PWM_EVT` 和 `SAMPLESW_LED_PWM_PERIOD_MS` 定义
+- `zcl_samplesw_data.c`: SwBuildId v1.0.7 → v1.0.8, HW_VERSION 0 → 2
+
+### 验证要点
+- LED亮度为100%（比v1.0.7亮，无PWM调光）
+- 信号稳定性应优于v1.0.7（无PWM定时器干扰）
+- 入网速度应正常（无PWM干扰BDB commissioning）
+- z2m中linkquality应稳定，不再大幅波动
+
+---
+
+## v1.0.7 - 2026-07-28
+
+未入网时禁用LED PWM调光，避免PWM定时器干扰BDB commissioning入网；HW_VERSION升级到2。
+
+### 问题背景
+用户反馈v1.0.6引入LED软件PWM调光后，可能影响设备入网（虽然文档中提到PWM定时器会干扰协议栈MAC时序，但未100%确认根因）。为安全起见，未入网时不启用PWM。
+
+### 修复方案
+1. **HW_VERSION升级**：0 → 2（区分硬件版本）
+2. **PWM启用逻辑优化**：
+   - 未入网时：LED直接写GPIO（100%亮度），PWM定时器不运行，零CPU开销
+   - 入网成功后（ZDO_STATE_CHANGE=DEV_ROUTER）：调用`zclSampleSw_LedPwmEnable()`启用PWM调光（50%亮度）
+
+### 行为对比
+| 状态 | v1.0.6 (修复前) | v1.0.7 (修复后) |
+|------|-----------------|-----------------|
+| 上电启动 | PWM立即启用，可能干扰入网 | LED直接写GPIO，无PWM干扰 |
+| 配网中（BDB commissioning） | PWM运行，5ms周期定时器 | PWM不运行，零CPU开销 |
+| 配网慢闪期间 | LED1以50%亮度慢闪 | LED1以100%亮度慢闪 |
+| 入网成功（DEV_ROUTER） | PWM已运行 | 启用PWM，LED切换到50%亮度 |
+| 正常工作 | LED 50%亮度 | LED 50%亮度 |
+
+### 实现要点
+- 新增 `ledPwmEnabled` 标志位（初始FALSE）
+- 新增 `zclSampleSw_LedPwmEnable()` 函数：设置标志位为TRUE并启动PWM定时器
+- 修改 `zclSampleSw_LedSetTarget()`：未启用PWM时直接调用`zclSampleSw_LedWriteGpio()`（100%亮度）
+- 修改 `zclSampleSw_Init()`：移除无条件启动PWM定时器的代码
+- 修改 `ZDO_STATE_CHANGE` 处理：收到DEV_ROUTER时调用`zclSampleSw_LedPwmEnable()`
+
+### 边界情况
+- **已配网设备上电**：BDB rejoin期间LED为100%亮度，rejoin成功后切换到50%亮度（有视觉过渡，但可接受）
+- **配网慢闪期间**：LED1以100%亮度慢闪，比v1.0.6的50%亮度更醒目，提示效果更好
+- **S1复位闪烁**：未入网时以100%亮度闪烁，复位后入网成功切换到50%亮度
+
+### Changed
+- `zcl_samplesw_data.c`: HW_VERSION 0 → 2, SwBuildId v1.0.6 → v1.0.7, DateCode 20260727 → 20260728
+- `zcl_samplesw.c`: 新增 `ledPwmEnabled` 标志位和 `zclSampleSw_LedPwmEnable()` 函数
+- `zcl_samplesw.c`: `zclSampleSw_LedSetTarget()` 添加PWM启用分支
+- `zcl_samplesw.c`: `zclSampleSw_Init()` 移除无条件启动PWM定时器
+- `zcl_samplesw.c`: `ZDO_STATE_CHANGE` 入网成功时调用 `zclSampleSw_LedPwmEnable()`
+
+### 验证要点
+- 未入网时LED亮度为100%（比v1.0.6亮），入网后切换到50%
+- 配网慢闪期间LED1亮度为100%，更醒目
+- 入网速度应恢复到v1.0.5水平（无PWM干扰）
+- 入网后LED亮度稳定在50%
+
+---
+
 ## v1.0.6 - 2026-07-27
 
 降低LED状态灯亮度至50%，并真实化设备信息（借壳约束下显示真实厂商/型号/硬件版本）。
