@@ -4,6 +4,47 @@
 
 ---
 
+## v1.0.9 - 2026-07-28
+
+移除ZCL命令处理后的主动Report，解决连续z2m操作3轮后设备卡死问题。
+
+### 问题背景
+用户反馈连续通过z2m操作设备开关（约3轮来回，12次ZCL命令）后，设备完全无响应（linkquality=0），约4分钟后自动恢复（看门狗复位后重启）。
+
+### 根因分析
+- CC2530 Router堆大小仅3072字节（[OnBoard.h:216](file:///d:/VC/Z-Stack/Projects/zstack/ZMain/TI2530DB/OnBoard.h#L216)）
+- 每次ZCL OnOff命令处理产生2条AF消息：主动Report + Default Response
+- 3轮×4端点×2消息 = 24条AF消息，占用约1200字节堆
+- 加上协议栈自身使用，总计接近3072字节上限
+- 堆耗尽后OSAL调度器卡死，看门狗超时复位
+
+### 修复方案
+移除 `zclSampleSw_HandleOnOffCmd()` 中的 `zclSampleSw_ReportOnOffState(idx)` 调用。
+
+**理由**：
+- ZCL层会自动发送Default Response，z2m据此确认命令已接收并更新状态
+- 主动Report是冗余的，白白浪费堆内存
+- 触摸操作（`ToggleRelay`）仍保留主动上报，因为z2m不知道本地触摸事件
+
+### 消息量对比
+| 场景 | v1.0.8 (修复前) | v1.0.9 (修复后) |
+|------|-----------------|-----------------|
+| 单次ZCL OnOff命令 | 2条AF消息 (Report + DefaultRsp) | 1条AF消息 (DefaultRsp) |
+| 3轮×4端点 | 24条AF消息 | 12条AF消息 |
+| 堆占用 | ~1200字节 | ~600字节 |
+
+### Changed
+- `zcl_samplesw.c`: `zclSampleSw_HandleOnOffCmd()` 移除 `zclSampleSw_ReportOnOffState(idx)` 调用
+- `zcl_samplesw_data.c`: SwBuildId v1.0.8 → v1.0.9
+
+### 验证要点
+- 连续z2m操作开关10轮以上不应卡死
+- 触摸操作后z2m状态应正常更新（保留主动上报）
+- 入网后z2m状态应正常同步（保留ReportAllOnOffState）
+- linkquality应稳定，不再出现归零现象
+
+---
+
 ## v1.0.8 - 2026-07-28
 
 移除LED软件PWM调光功能（影响RF信号稳定性），保持发射功率4dBm。

@@ -911,6 +911,9 @@ static void zclSampleSw_ToggleRelay(uint8 idx)
 /*********************************************************************
  * @fn      zclSampleSw_HandleOnOffCmd
  * @brief   处理ZCL On/Off/Toggle命令, 更新继电器状态和GPIO
+ *          v1.0.9: 移除主动ReportOnOffState, z2m通过Default Response已确认状态
+ *          原因: CC2530堆仅3072字节, 每次ZCL命令处理产生2条AF消息
+ *                (Report + Default Response), 连续操作会耗尽堆导致看门狗复位
  * @param   idx - 继电器索引 0~3
  * @param   cmd - ZCL命令ID (COMMAND_ON / COMMAND_OFF / COMMAND_TOGGLE)
  * @return  none
@@ -932,7 +935,9 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd)
       return;
   }
   zclSampleSw_UpdateRelayOutput(idx);
-  zclSampleSw_ReportOnOffState(idx);
+  // v1.0.9: 移除 zclSampleSw_ReportOnOffState(idx)
+  // ZCL层会自动发送Default Response, z2m据此确认状态, 主动Report是冗余的
+  // 触摸操作(ToggleRelay)仍保留主动上报, 因为z2m不知道本地触摸事件
   // 断电记忆: 调度延迟写入 (5秒后合并写入NV)
   zclSampleSw_NvScheduleSave();
 }
@@ -940,7 +945,8 @@ static void zclSampleSw_HandleOnOffCmd(uint8 idx, uint8 cmd)
 /*********************************************************************
  * @fn      zclSampleSw_ReportOnOffState
  * @brief   向协调器上报指定通道继电器的OnOff属性状态(ZCL Report Attributes)
- *          触摸翻转或ZCL命令处理后调用, 确保z2m状态同步
+ *          仅触摸翻转后调用(z2m不知道本地操作); ZCL命令处理后不再调用
+ *          (z2m通过Default Response已确认状态, 主动Report是冗余的)
  * @param   idx - 继电器索引 0~3
  * @return  none
  */
