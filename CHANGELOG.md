@@ -36,6 +36,13 @@
 ### Changed
 - `zcl_samplesw.c`: `zclSampleSw_HandleOnOffCmd()` 移除 `zclSampleSw_ReportOnOffState(idx)` 调用
 - `zcl_samplesw_data.c`: SwBuildId v1.0.8 → v1.0.9
+- 新增 `Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/burn.py`: 一键烧录脚本（hex→bin→上传→烧录→校验自动化）
+
+### 文档更新
+- `Documents/烧录说明.md`: 新增"一键烧录"章节，原手动流程降级为"手动烧录流程"
+- `Documents/编译说明.md`: 工程路径从 SampleSwitch 更新为 HGZBSwitch，版本号示例更新到 v1.0.9
+- `Documents/项目进展.md`: 当前版本 v1.0.6 → v1.0.9，补充 v1.0.7~v1.0.9 里程碑和测试要点
+- `Documents/项目文档索引.md`: 当前版本号更新，快速定位新增 burn.py 入口
 
 ### 验证要点
 - 连续z2m操作开关10轮以上不应卡死
