@@ -10,9 +10,9 @@ HGZBSwitch 固件烧录脚本
   4. 轮询烧录进度直到完成
 
 用法:
-  python burn.py
-  python burn.py --ip 10.0.0.147
-  python burn.py --hex RouterEB/Exe/HGZBSwitch.hex
+  python tools/burn.py
+  python tools/burn.py --ip 10.0.0.147
+  python tools/burn.py --hex Projects/.../HGZBSwitch.hex
 """
 import argparse
 import os
@@ -22,7 +22,8 @@ import time
 import requests
 
 DEFAULT_IP = "10.0.0.147"
-DEFAULT_HEX = os.path.join("RouterEB", "Exe", "HGZBSwitch.hex")
+# 相对于项目根目录 (tools/ 的上级)
+DEFAULT_HEX = os.path.join("Projects", "zstack", "HomeAutomation", "HGZBSwitch", "CC2530DB", "RouterEB", "Exe", "HGZBSwitch.hex")
 REMOTE_BIN_NAME = "HGZBSwitch.bin"
 CC2530_FLASH_SIZE = 256 * 1024  # CC2530F256 = 256KB
 TIMEOUT = 10
@@ -151,9 +152,10 @@ def main():
     ap.add_argument("--no-burn", action="store_true", help="仅转换+上传, 不烧录")
     args = ap.parse_args()
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    hex_path = args.hex if os.path.isabs(args.hex) else os.path.join(script_dir, args.hex)
-    bin_path = os.path.join(script_dir, "HGZBSwitch_burn.bin")
+    # 项目根目录 = tools/ 的上级目录
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    hex_path = args.hex if os.path.isabs(args.hex) else os.path.join(project_root, args.hex)
+    bin_path = os.path.join(project_root, "tools", "HGZBSwitch_burn.bin")
 
     # 1. hex -> bin
     print(f"\n=== 步骤 1: hex2bin 转换 ===")
