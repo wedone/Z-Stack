@@ -4,6 +4,38 @@
 
 ---
 
+## v1.0.10 - 2026-07-29
+
+修复S1软复位后无法入网问题，区分已配网/新设备选择BDB commissioning模式。
+
+### 问题背景
+用户反馈S1长按5秒复位后，设备无法重新入网（z2m无任何日志），必须断电再上电才能入网。有时3米无遮挡入网困难，5米两堵墙反而能入网。
+
+### 根因分析
+`zclSampleSw_Init()` 中无条件调用 `bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP)`，而该常量值为 `0x00`，不设置任何 commissioning mode 位。
+
+BDB commissioning 流程（[bdb.c:817](file:///d:/VC/Z-Stack/Components/stack/bdb/bdb.c#L817)）对新设备（`bdbNodeIsOnANetwork == FALSE`）的处理：
+1. S1复位调用 `bdb_resetLocalAction()` → `bdb_setFN()` 清除 `bdbNodeIsOnANetwork` 和 NV 网络状态
+2. 软复位后 `zclSampleSw_Init()` 传入 mode=0x00
+3. BDB 读取 NV，`bdbNodeIsOnANetwork == FALSE`
+4. BDB 检查 `bdbCommissioningMode == 0`（确实为0，无任何 mode 位）
+5. BDB 直接 report INITIALIZATION 失败并 return
+6. **不会调用 `ZDO_InitDevice()`，不会触发 NWK_STEERING**
+7. 设备无法发现网络，无法入网
+
+原代码注释"新设备: 触发BDB initialization后启动NWK_STEERING commissioning"是错误的。
+
+### 修复方案
+在 `zclSampleSw_Init()` 中读取 NV `ZCD_NV_BDBNODEISONANETWORK` 状态，根据状态选择 commissioning 模式：
+- `TRUE`（已配网设备）→ `BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP`（恢复网络）
+- `FALSE`（工厂新设备/S1复位后）→ `BDB_COMMISSIONING_MODE_NWK_STEERING`（发现网络并加入）
+
+### Changed
+- `zcl_samplesw.c`: `zclSampleSw_Init()` 根据 NV 状态选择 commissioning 模式
+- `zcl_samplesw_data.c`: SwBuildId v1.0.9 → v1.0.10, DateCode 20260728 → 20260729
+
+---
+
 ## v1.0.9 - 2026-07-28
 
 移除ZCL命令处理后的主动Report，解决连续z2m操作3轮后设备卡死问题。

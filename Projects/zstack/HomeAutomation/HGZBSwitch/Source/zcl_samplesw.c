@@ -478,12 +478,25 @@ void zclSampleSw_Init( byte task_id )
   // 必须在 bdb_StartCommissioning() 之前调用, 确保入网时即使用设置后的发射功率
   ZMacSetTransmitPower(TX_PWR_PLUS_4);
 
-  // v1.0.0修复: UI模块剥离后, 需显式触发BDB commissioning启动Zigbee网络
-  // 原本由 UI_Init() 内部调用 bdb_StartCommissioning(), 移除UI后应用层需自行启动
-  // 参数 0x00 = BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP
-  //   - 已配网设备: 尝试rejoin恢复网络
-  //   - 新设备: 触发BDB initialization后启动NWK_STEERING commissioning
-  bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP);
+  // v1.0.10修复: S1软复位后无法入网的根因
+  // 原代码无条件传入 BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP(=0x00),
+  // 该参数不设置任何commissioning mode位, 对工厂新设备(S1复位后bdbNodeIsOnANetwork=FALSE)
+  // BDB检查commissioningMode==0后直接report失败, 不会调用ZDO_InitDevice, 设备无法入网。
+  // 修复: 读取NV中的bdbNodeIsOnANetwork状态, 区分已配网/新设备选择commissioning模式
+  {
+    uint8 isOnNetwork = FALSE;
+    osal_nv_read(ZCD_NV_BDBNODEISONANETWORK, 0, sizeof(uint8), &isOnNetwork);
+    if (isOnNetwork == TRUE)
+    {
+      // 已配网设备: 尝试rejoin恢复网络
+      bdb_StartCommissioning(BDB_COMMISSIONING_REJOIN_EXISTING_NETWORK_ON_STARTUP);
+    }
+    else
+    {
+      // 工厂新设备(S1复位后/首次配网): 触发NWK_STEERING发现网络并加入
+      bdb_StartCommissioning(BDB_COMMISSIONING_MODE_NWK_STEERING);
+    }
+  }
 
   // v1.0.4新增: 启动配网中LED1慢闪, 提示用户设备正在配网
   // 已配网设备: BDB rejoin成功后ZDO_STATE_CHANGE会触发StopPairingBlink
