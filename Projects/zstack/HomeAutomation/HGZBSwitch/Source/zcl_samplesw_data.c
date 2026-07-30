@@ -100,9 +100,10 @@ const uint8 zclSampleSw_ZCLVersion = SAMPLESW_ZCLVERSION;
 const uint8 zclSampleSw_ManufacturerName[] = { 6, 'L','i','n','x','e','e' };
 const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X','1','.','0' };
 // DateCode: 固件编译日期 (ZCL DateCode 属性, 格式: YYYYMMDD)
-// SwBuildId: 型号+版本号 (ZCL SwBuildId 属性, 格式: 型号-VX.Y.Z)
-const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','2','9' };
-const uint8 zclSampleSw_SwBuildId[] = { 17, 'H','A','-','S','P','A','4','C','1','-','V','1','.','0','.','1','0' };
+// SwBuildId: 型号+版本号 (ZCL SwBuildId 属性)
+//   v1.0.10: 长度从 17 缩为 16 字节 (去掉 V 前缀), 避免 ZCL Read Attrs Rsp 超 MTU 被丢弃
+const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','3','1' };
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','1','.','0','.','1','0' };
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
 uint8 zclSampleSw_LocationDescription[17];
