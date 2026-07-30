@@ -8,7 +8,9 @@ Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/RouterEB/
 Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/settings/
 # burn.py 生成的临时 bin (hex→bin 转换产物, 不入库)
 tools/HGZBSwitch_burn.bin
+Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/HGZBSwitch_burn.bin
 *.dep
+cap/
 
 # 测试日志
 Documents/*.log
