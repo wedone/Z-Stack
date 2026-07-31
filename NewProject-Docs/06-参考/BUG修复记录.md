@@ -298,6 +298,45 @@ if (curBit) {
 
 ---
 
+## BUG-014: LED1 入网后不停止慢闪
+
+| 项 | 内容 |
+|----|------|
+| **日期** | 2026-07-31 |
+| **版本** | v0.2.1 |
+| **commit** | `00404dc` |
+| **严重度** | 中 - 入网后 LED1 仍闪烁，影响状态显示 |
+
+### 现象
+
+1. 设备上电后 LED1 开始 1Hz 配网慢闪（正常）
+2. 设备成功入网后，LED1 **继续慢闪**，不恢复显示继电器 1 状态
+3. 等待 5 分钟超时后 LED1 停止慢闪（超时保护机制生效）
+
+### 根因
+
+`ZDO_STATE_CHANGE(DEV_ROUTER)` 消息未被应用层正确处理。`zdoSendStateChangeMsg()` 的去重逻辑（ZDObject.c:437-459）在队列中已有 ZDO_STATE_CHANGE 消息时，仅原地更新 status 字段，不重复发送。若设备入网过程中状态机经历了多个中间状态，去重后的消息可能只有中间状态，`DEV_ROUTER` 可能被覆盖或丢失。
+
+原始代码（linxee v0.2.0）仅在 `ZDO_STATE_CHANGE` 的 `case` 中检查 `DEV_ROUTER` 才调用 `StopPairingBlink()`，缺少 BDB 回调保护。
+
+### 修复方案
+
+**双重触发机制**，确保至少一个条件触发 StopPairingBlink：
+
+1. **BDB commissioning 回调**（新增，更可靠）：
+   - `BDB_COMMISSIONING_INITIALIZATION` 成功（已配网设备恢复网络）：停止慢闪
+   - `BDB_COMMISSIONING_NWK_STEERING` 成功（新设备入网）：停止慢闪
+
+2. **ZDO_STATE_CHANGE 回调**（放宽条件）：
+   - 移除 `zclSampleSw_NwkState != DEV_ROUTER` 限制
+   - `StopPairingBlink` 内部有 `pairingBlinkActive` 保护，多次调用安全
+
+### 涉及文件
+
+- `zcl_samplesw.c`: `zclSampleSw_ProcessCommissioningStatus()` 回调中 BDB_COMMISSIONING_INITIALIZATION/NWK_STEERING 成功时添加 StopPairingBlink；ZDO_STATE_CHANGE 放宽 DEV_ROUTER 条件
+
+---
+
 ## BUG-009: 断电恢复时 4 路开关全部为 ON
 
 | 项 | 内容 |

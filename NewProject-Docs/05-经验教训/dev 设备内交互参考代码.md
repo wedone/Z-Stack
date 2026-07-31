@@ -84,7 +84,7 @@ static uint8 startupOnOffCached[SAMPLESW_NUM_RELAYS] = {
 
 **硬件交互**：继电器设为输出默认高电平（断开），触摸设为输入（上拉）。
 
-> **dev 的已知问题**：dev 的 `InitGpio()` 没有显式配置 P0_0~P0_3 为 GPIO 输出（注释说依赖 HalLedInit，但 HalLedInit 只配 P1 口）。linxee v0.1.1 已修复此问题，增加 `P0SEL &= ~0x0F; P0DIR |= 0x0F;`。linxee 实现时应保留此修复。
+> **dev 的已知问题**：dev 的 `InitGpio()` 没有显式配置 P0_0~P0_3 为 GPIO 输出（注释说依赖 HalLedInit，但 HalLedInit 只配 P1 口）。linxee v0.2.0 已修复此问题（方案B：hal_board_cfg_linxee.h 的 `HAL_BOARD_INIT` 中 `LEDx_SET_DIR()` 配置 GPIO 方向）。linxee 实现时应保留此修复。
 
 ```c
 void zclSampleSw_InitGpio(void)
