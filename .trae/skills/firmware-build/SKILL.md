@@ -37,8 +37,14 @@ $iar = "C:\Program Files (x86)\IAR Systems\Embedded Workbench\common\bin\IarBuil
 
 3. **验证产物**: 确认 `HGZBSwitch.hex` 文件存在且非空
 
-4. **报告结果**:
-   - 成功: 简短确认 + 产物路径
+4. **生成版本化固件名**: 编译成功后运行重命名脚本, 从SwBuildId读取版本号生成 `HGZBSwitch_vX.Y.Z.hex`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "d:\vc\Z-Stack\tools\post_build_rename.ps1"
+```
+
+5. **报告结果**:
+   - 成功: 简短确认 + 版本化产物路径 (如 `HGZBSwitch_v0.1.0.hex`)
    - 失败: 错误摘要 + 可能修复方向
 
 ## 常见编译错误
@@ -52,10 +58,14 @@ $iar = "C:\Program Files (x86)\IAR Systems\Embedded Workbench\common\bin\IarBuil
 
 | 宏 | 说明 |
 |----|------|
-| `ZCL_REPORTING_DEVICE` | 启用 ZCL 属性上报 |
-| `ZG_BUILD_RTR_TYPE` | 设备类型 Router |
 | `CC2530` | 目标芯片 |
-| `HAL_KEY=FALSE` | 禁用 HAL_KEY 模块 (v1.0.0 起避免 P2.0/P0_6 引脚冲突) |
+| `ZCL_REPORTING_DEVICE` | 启用 ZCL 属性上报 |
+| `HAL_KEY=FALSE` | 禁用 HAL_KEY 模块 (避免 P2.0/P0.6 引脚冲突) |
+| `HAL_LCD=FALSE` | 禁用 LCD |
+| `HAL_ADC=FALSE` | 禁用 ADC |
+| `DISABLE_GREENPOWER_BASIC_PROXY` | 禁用 GP 代理 |
+
+> 注意: `ZG_BUILD_RTR_TYPE` 已在 ZGlobals.h 中定义, 不需要在 .ewp 的 CCDefines 中重复定义。
 
 ## 后续
 
