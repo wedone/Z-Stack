@@ -1,0 +1,39 @@
+zigbee-herdsman-converters/
+# IAR 编译输出
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/RouterEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/CoordinatorEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/EndDeviceEB/
+Projects/zstack/HomeAutomation/SampleSwitch/CC2530DB/settings/
+Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/RouterEB/
+Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/settings/
+# burn.py 生成的临时 bin (hex→bin 转换产物, 不入库)
+tools/HGZBSwitch_burn.bin
+Projects/zstack/HomeAutomation/HGZBSwitch/CC2530DB/HGZBSwitch_burn.bin
+*.dep
+cap/
+
+# 测试日志
+Documents/*.log
+
+# Object files
+*.o
+*.obj
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# OS 文件
+Thumbs.db
+.DS_Store
+
+# IDE (.trae/ 目录下其他文件忽略, skills 例外入库)
+.trae/*
+!.trae/skills/
