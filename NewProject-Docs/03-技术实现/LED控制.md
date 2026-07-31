@@ -48,33 +48,33 @@ v1.0.6~v1.0.7 版本曾引入软件 PWM 调光方案，结果导致 RF 信号严
     ↓ 调用
 zclSampleSw_LedSetTarget(idx, on)   ← 应用层统一接口
     ↓ 调用
-zclSampleSw_LedWriteGpio(idx, on)   ← 底层 GPIO 写入
-    ↓ 操作
-P0_0 / P0_1 / P0_2 / P0_3
+zclSampleSw_LedWriteGpio(idx, on)   ← 底层 LED 控制
+    ↓ 调用
+HalLedSet(HAL_LED_1<<idx, mode)     ← Z-Stack 协议栈 LED API
+    ↓ 操作 (hal_board_cfg_linxee.h 定义)
+P0_0 / P0_1 / P0_2 / P0_3 (ACTIVE_LOW)
 ```
 
-### 4.1 底层 GPIO 写入（LedWriteGpio）
+> **方案B变更**：底层 LED 控制从直接写 GPIO 改为通过 `HalLedSet` API，LED 引脚映射由 `hal_board_cfg_linxee.h` 定义。详见 [确定正确的决策 §16](../05-经验教训/确定正确的决策.md#16-方案b重定义-hal_board_cfg-解决-led-引脚冲突不用防御性刷新)。
+
+### 4.1 底层 LED 控制（LedWriteGpio）
 
 ```c
 /*********************************************************************
  * @fn      zclSampleSw_LedWriteGpio
  *
- * @brief   v1.0.6新增: LED底层GPIO写入 (反逻辑: on=TRUE→写0亮, on=FALSE→写1灭)
- * @param   idx - LED索引 0~3 (LED1~4 → P0_0~P0_3)
+ * @brief   LED底层控制 (方案B: 通过 HalLedSet API 操作)
+ *          LED引脚映射由 hal_board_cfg_linxee.h 定义: LED1~4 → P0_0~P0_3 (ACTIVE_LOW)
+ *          on=TRUE → HalLedSet(ON)  → HAL_TURN_ON_LEDn()  → P0_x=0 (亮)
+ *          on=FALSE→ HalLedSet(OFF) → HAL_TURN_OFF_LEDn() → P0_x=1 (灭)
+ * @param   idx - LED索引 0~3 (LED1~4)
  * @param   on  - TRUE=亮, FALSE=灭
  * @return  none
  */
 static void zclSampleSw_LedWriteGpio(uint8 idx, uint8 on)
 {
-  uint8 val = on ? 0 : 1;   // 反逻辑: 亮=0, 灭=1
-  switch (idx)
-  {
-    case 0: P0_0 = val; break;
-    case 1: P0_1 = val; break;
-    case 2: P0_2 = val; break;
-    case 3: P0_3 = val; break;
-    default: break;
-  }
+  // HAL_LED_1(0x01)<<idx 映射 idx 0~3 → HAL_LED_1~4
+  HalLedSet(HAL_LED_1 << idx, on ? HAL_LED_MODE_ON : HAL_LED_MODE_OFF);
 }
 ```
 
@@ -412,21 +412,27 @@ if ( events & SAMPLESW_RESET_BLINK_EVT )
 }
 ```
 
-## 8. 防御性 LED 刷新
+## 8. 防御性 LED 刷新（已移除）
 
-Z-Stack 协议栈残留代码（如 ZDApp.c 中 Router 启动逻辑）可能意外修改 P0_0~P0_3。在 `ProcessTouchPoll` 中每 50ms 防御性刷新一次 LED 状态：
+> **方案B变更（v0.1.1）**：防御性 LED 刷新已移除。方案B通过重定义 `hal_board_cfg` 使协议栈 LED API 直接操作 P0_0~P0_3，从根本上消除了引脚冲突，不再需要防御性刷新。
+>
+> 详见 [确定正确的决策 §16](../05-经验教训/确定正确的决策.md#16-方案b重定义-hal_board_cfg-解决-led-引脚冲突不用防御性刷新) 和 [已证实的误判 §3](../05-经验教训/已证实的误判.md#3-led-防御性刷新v024)。
+
+### 历史背景（仅作参考，不得恢复）
+
+v0.2.4 曾引入每 50ms 防御性刷新 LED 状态的代码，作为协议栈残留代码干扰 GPIO 的缓解措施：
 
 ```c
-// BUG-011修复: 防御性刷新LED状态 (每50ms, 跟随触摸轮询周期)
-// Z-Stack协议栈残留代码可能意外修改P0_0~P0_3, 定期刷新确保LED正确显示继电器状态
-zclSampleSw_UpdateAllRelayOutputs();
+// ❌ 已移除: 防御性刷新LED状态 (每50ms)
+// 方案B已从根本上消除引脚冲突，此代码不再需要
+// zclSampleSw_UpdateAllRelayOutputs();
 ```
 
-并在 `ZDO_STATE_CHANGE` 事件中刷新一次，恢复正确显示（协议栈 Router 启动时操作过 LED3/LED4）：
+`ZDO_STATE_CHANGE` 事件中的刷新保留，因为协议栈 Router 启动时可能操作 LED，入网后刷新一次恢复正确显示是合理的：
 
 ```c
 case ZDO_STATE_CHANGE:
-  // 86开关: 协议栈Router启动时会操作LED3/LED4(ZDApp.c), 覆盖继电器状态灯。
+  // 86开关: 协议栈Router启动时会操作LED(ZDApp.c), 覆盖继电器状态灯。
   // 入网状态变化后重新刷新所有继电器/LED输出, 恢复正确显示。
   zclSampleSw_UpdateAllRelayOutputs();
   ...
