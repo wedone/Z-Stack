@@ -327,7 +327,7 @@ UINT16 zclSampleSw_event_loop( byte task_id, UINT16 events )
 /*********************************************************************
  * @fn      zclSampleSw_InitGpio
  * @brief   初始化继电器/LED/触摸引脚的GPIO方向与初始电平
- *          LED(P0_0~P0_3): 输出, 必须显式配置(HalLedInit只配P1口HAL LED)
+ *          LED(P0_0~P0_3): 输出, P0SEL需显式配置为GPIO功能
  *          继电器(P1_0/P1_2/P1_6/P2_0): 输出, 默认高电平(继电器断开)
  *          触摸(P0_4~P0_7): 输入, 上拉(CC2530 P0口默认上拉)
  *          S1(P1_3): 输入, 上拉(低电平有效)
@@ -335,11 +335,10 @@ UINT16 zclSampleSw_event_loop( byte task_id, UINT16 events )
  */
 void zclSampleSw_InitGpio(void)
 {
-  // LED引脚设为GPIO功能并配置为输出 (P0_0~P0_3)
-  // 必须显式配置, HalLedInit只配置P1口的HAL LED引脚, 不覆盖P0_0~P0_3
-  // P0_2/P0_3默认可能是UART0功能, P0_0/P0_1默认可能是模拟输入
+  // LED引脚设为GPIO功能 (P0_0~P0_3)
+  // 方案B: LED方向由 HAL_BOARD_INIT() 通过 LEDx_SET_DIR() 配置,
+  //        但 P0SEL 需在此显式设置 (HAL_BOARD_INIT 不配置 P0SEL)
   P0SEL &= ~(BV(0) | BV(1) | BV(2) | BV(3));  // P0_0~P0_3 选为GPIO
-  P0DIR |= (BV(0) | BV(1) | BV(2) | BV(3));   // 设为输出
 
   // 继电器引脚设为GPIO功能并配置为输出
   P1SEL &= ~RELAY_P1_BV;        // P1_0/P1_2/P1_6 选为GPIO
@@ -366,22 +365,18 @@ void zclSampleSw_InitGpio(void)
 
 /*********************************************************************
  * @fn      zclSampleSw_LedWriteGpio
- * @brief   LED底层GPIO写入 (反逻辑: on=TRUE→写0亮, on=FALSE→写1灭)
- * @param   idx - LED索引 0~3 (LED1~4 → P0_0~P0_3)
+ * @brief   LED底层控制 (方案B: 通过 HalLedSet API 操作)
+ *          LED引脚映射由 hal_board_cfg_linxee.h 定义: LED1~4 → P0_0~P0_3 (ACTIVE_LOW)
+ *          on=TRUE → HalLedSet(ON)  → HAL_TURN_ON_LEDn()  → P0_x=0 (亮)
+ *          on=FALSE→ HalLedSet(OFF) → HAL_TURN_OFF_LEDn() → P0_x=1 (灭)
+ * @param   idx - LED索引 0~3 (LED1~4)
  * @param   on  - TRUE=亮, FALSE=灭
  * @return  none
  */
 static void zclSampleSw_LedWriteGpio(uint8 idx, uint8 on)
 {
-  uint8 val = on ? 0 : 1;   // 反逻辑: 亮=0, 灭=1
-  switch (idx)
-  {
-    case 0: P0_0 = val; break;
-    case 1: P0_1 = val; break;
-    case 2: P0_2 = val; break;
-    case 3: P0_3 = val; break;
-    default: break;
-  }
+  // HAL_LED_1(0x01)<<idx 映射 idx 0~3 → HAL_LED_1~4
+  HalLedSet(HAL_LED_1 << idx, on ? HAL_LED_MODE_ON : HAL_LED_MODE_OFF);
 }
 
 /*********************************************************************
@@ -561,10 +556,6 @@ static void zclSampleSw_ProcessTouchPoll(void)
     osal_memcpy(startupOnOffCached, zclSampleSw_StartUpOnOff, SAMPLESW_NUM_RELAYS);
     zclSampleSw_NvScheduleSave();
   }
-
-  // 防御性刷新LED状态 (每50ms, 跟随触摸轮询周期)
-  // Z-Stack协议栈残留代码可能意外修改P0_0~P0_3, 定期刷新确保LED正确显示继电器状态
-  zclSampleSw_UpdateAllRelayOutputs();
 
   // 重新启动下一次轮询
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
