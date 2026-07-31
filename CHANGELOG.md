@@ -1,5 +1,17 @@
 # 更新日志
 
+## v0.2.1 (2026-07-31)
+
+修复LED1入网后不停止慢闪的问题，SwBuildId格式恢复带V前缀。
+
+### Fixed
+- LED1入网后不停止慢闪：ZDO_STATE_CHANGE(DEV_ROUTER)可能因ZDApp状态去重机制不触发，导致StopPairingBlink未被调用 (00404dc)
+  - BDB commissioning回调中添加StopPairingBlink触发点(INITIALIZATION成功/NWK_STEERING成功)
+  - ZDO_STATE_CHANGE放宽条件: 移除NwkState!=DEV_ROUTER限制(StopPairingBlink内部有保护)
+
+### Changed
+- SwBuildId格式恢复带V前缀: HA-SPA4C1-0.2.0 → HA-SPA4C1-V0.2.1 (符合版本规则§3)
+
 ## v0.2.0 (2026-07-31)
 
 方案B重定义hal_board_cfg，从根本上消除协议栈与应用层LED引脚冲突。

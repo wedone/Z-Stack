@@ -64,8 +64,8 @@ const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X
 const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','3','1' };
 
 // SwBuildId: 型号+版本号 (总长度含前缀16字节, 避免ZCL Read Attrs Rsp超MTU)
-// v0.2.0: 方案B重定义hal_board_cfg, LED映射改用P0_0~P0_3
-const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','0','.','2','.','0' };
+// v0.2.1: 修复LED1入网后不停止慢闪
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','V','0','.','2','.','1' };
 
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
