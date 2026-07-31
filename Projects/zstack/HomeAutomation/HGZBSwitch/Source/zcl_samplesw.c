@@ -562,6 +562,10 @@ static void zclSampleSw_ProcessTouchPoll(void)
     zclSampleSw_NvScheduleSave();
   }
 
+  // 防御性刷新LED状态 (每50ms, 跟随触摸轮询周期)
+  // Z-Stack协议栈残留代码可能意外修改P0_0~P0_3, 定期刷新确保LED正确显示继电器状态
+  zclSampleSw_UpdateAllRelayOutputs();
+
   // 重新启动下一次轮询
   osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
 }
@@ -714,9 +718,6 @@ static void zclSampleSw_ProcessResetBlink(void)
 
     // 3. 刷新所有继电器/LED状态到默认(继电器OFF, LED亮)
     zclSampleSw_UpdateAllRelayOutputs();
-
-    // 4. 重启触摸轮询
-    osal_start_timerEx(zclSampleSw_TaskID, SAMPLESW_TOUCH_POLL_EVT, TOUCH_POLL_INTERVAL_MS);
   }
 }
 
