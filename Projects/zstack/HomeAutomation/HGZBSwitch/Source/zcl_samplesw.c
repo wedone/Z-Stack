@@ -260,9 +260,9 @@ UINT16 zclSampleSw_event_loop( byte task_id, UINT16 events )
           // 修复断电恢复后Z2M状态不同步
           // 移除30秒周期性上报定时器, 避免无操作时触发z2m state_action生成无意义action事件
           // 状态同步改为依赖: 入网后立即上报 + 操作后立即上报 + z2m availability检测
-          if ((devStates_t)(MSGpkt->hdr.status) == DEV_ROUTER && zclSampleSw_NwkState != DEV_ROUTER)
+          if ((devStates_t)(MSGpkt->hdr.status) == DEV_ROUTER)
           {
-            // 入网成功, 停止配网中LED1慢闪
+            // 入网成功, 停止配网中LED1慢闪 (StopPairingBlink内部有pairingBlinkActive保护, 多次调用安全)
             zclSampleSw_StopPairingBlink();
             // 立即上报所有4路OnOff状态
             zclSampleSw_ReportAllOnOffState();
@@ -1059,7 +1059,8 @@ static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bd
     case BDB_COMMISSIONING_NWK_STEERING:
       if(bdbCommissioningModeMsg->bdbCommissioningStatus == BDB_COMMISSIONING_SUCCESS)
       {
-        // 已成功加入网络
+        // 新设备入网成功, 停止配网中LED1慢闪
+        zclSampleSw_StopPairingBlink();
       }
       break;
 
@@ -1069,7 +1070,9 @@ static void zclSampleSw_ProcessCommissioningStatus(bdbCommissioningModeMsg_t *bd
     case BDB_COMMISSIONING_INITIALIZATION:
       if(bdbCommissioningModeMsg->bdbCommissioningStatus == BDB_COMMISSIONING_SUCCESS)
       {
-        // 已成功恢复网络
+        // 已配网设备网络信息恢复成功, 停止配网中LED1慢闪
+        // (ZDO_STATE_CHANGE(DEV_ROUTER)可能因状态去重不触发, BDB回调更可靠)
+        zclSampleSw_StopPairingBlink();
       }
       else
       {
