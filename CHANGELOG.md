@@ -1,5 +1,25 @@
 # 更新日志
 
+## v0.2.0 (2026-07-31)
+
+方案B重定义hal_board_cfg，从根本上消除协议栈与应用层LED引脚冲突。
+
+### Changed
+- LED控制架构变更：通过PreInclude机制注入自定义hal_board_cfg_linxee.h，重定义LED1~4映射到P0_0~P0_3 (ACTIVE_LOW) (1098464)
+- LedWriteGpio从直接GPIO写入改为HalLedSet API，协议栈LED API直接操作应用层引脚 (2bcbfb6)
+- HAL_BOARD_INIT移除P0INP|=PUSH2_BV (原TI代码影响P0_0三态)
+- 移除ENABLE_LED4_DISABLE_S1宏，LED4独立映射P0_3
+
+### Removed
+- 移除触摸轮询中的防御性LED刷新 (方案B已从根本上消除冲突) (2bcbfb6)
+- 移除InitGpio中冗余的P0DIR设置 (已由HAL_BOARD_INIT的LEDx_SET_DIR配置)
+
+### 验证要点
+- 4路LED正确反馈继电器状态 (OFF→亮, ON→灭)
+- 协议栈操作LED (如ZDApp Router启动) 不再干扰应用层LED状态
+- z2m SwBuildId显示 HA-SPA4C1-0.2.0
+- 触摸/S1复位/配网慢闪LED交互正常
+
 ## v0.1.1 (2026-07-31)
 
 ### 修复
