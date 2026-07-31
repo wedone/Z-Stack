@@ -927,10 +927,6 @@ static void zclSampleSw_ReportInputState(uint8 idx)
   reportRec->dataType = ZCL_DATATYPE_SINGLE_PREC;
   reportRec->attrData = (uint8 *)&zclSampleSw_InputState[idx];
 
-  zclSampleSw_DstAddr.addrMode = (afAddrMode_t)Addr16Bit;
-  zclSampleSw_DstAddr.addr.shortAddr = 0;  // 协调器
-  zclSampleSw_DstAddr.endPoint = 1;
-
   zcl_SendReportCmd(ep, &zclSampleSw_DstAddr, ZCL_CLUSTER_ID_GEN_ANALOG_INPUT_BASIC,
                     reportCmd, ZCL_FRAME_SERVER_CLIENT_DIR, TRUE, zclSampleSwSeqNum++);
 

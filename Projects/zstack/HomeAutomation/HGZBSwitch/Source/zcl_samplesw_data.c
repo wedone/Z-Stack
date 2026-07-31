@@ -199,7 +199,7 @@ CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep2[] =
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN,
-    ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[2] } },
+    ACCESS_CONTROL_READ, (void *)&zclSampleSw_RelayState[2] } },
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8,
     ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[2] } },
 };
