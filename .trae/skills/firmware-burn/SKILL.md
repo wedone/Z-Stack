@@ -17,7 +17,7 @@ description: "烧录固件到 CC2530 (通过 CCLoader ESP8266 无线烧录器)�
 
 1. **已编译**: `Projects\zstack\HomeAutomation\HGZBSwitch\CC2530DB\RouterEB\Exe\HGZBSwitch.hex` 存在
    - 若不存在, 先触发 `firmware-build` skill
-2. **CCLoader 在线**: ESP8266 烧录器已通电并连入网络 (默认 IP `10.0.0.147`)
+2. **CCLoader 在线**: ESP8266 烧录器已通电并连入网络 (默认 IP `10.0.0.144`)
 3. **Python 依赖**: `pip install requests` (burn.py 依赖)
 
 ## 一键烧录 (推荐)
@@ -59,7 +59,7 @@ python d:\vc\Z-Stack\tools\burn.py --no-burn
 4. **判断结果**:
    - `[OK] 烧录成功!` → 完成, 提示用户重新上电设备
    - `[ERROR]` 或 `[FAIL]` → 报告错误信息
-   - 连接超时 → 提示检查 ESP8266 是否在线 (`ping 10.0.0.147`)
+   - 连接超时 → 提示检查 ESP8266 是否在线 (`ping 10.0.0.144`)
 5. **烧录后**: 提醒用户重新上电 CC2530 设备, 观察入网和功能
 
 ## CCLoader 设备信息
@@ -67,7 +67,7 @@ python d:\vc\Z-Stack\tools\burn.py --no-burn
 | 项 | 值 |
 |----|-----|
 | 硬件 | NodeMCU ESP8266 + CC2530 (CC Debug 接线) |
-| 默认地址 | `http://10.0.0.147` |
+| 默认地址 | `http://10.0.0.144` |
 | 烧录接口 | CC Debug (D1=RESET, D2=DC, D6=DD) |
 | 串口监控 | ESP8266 RX ← CC2530 P0_3 (UART0 TX) |
 | 固件格式 | **仅接受 .bin** (burn.py 自动从 .hex 转换) |
@@ -76,7 +76,7 @@ python d:\vc\Z-Stack\tools\burn.py --no-burn
 
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| 无法连接 CCLoader | ESP8266 未通电或不在线 | `ping 10.0.0.147`, 检查网络 |
+| 无法连接 CCLoader | ESP8266 未通电或不在线 | `ping 10.0.0.144`, 检查网络 |
 | 设备非 idle | 上次烧录未完成 | `GET /api/status` 查看 state, 必要时重启 ESP8266 |
 | 烧录失败 | 接线松动或 CC2530 供电不足 | 检查 D1/D2/D6 接线, 确认 3.3V 供电, 共地 |
 | hex 文件不存在 | 未编译或路径错误 | 先触发 `firmware-build` skill |

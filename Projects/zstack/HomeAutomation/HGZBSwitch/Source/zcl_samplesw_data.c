@@ -64,8 +64,8 @@ const uint8 zclSampleSw_ModelId[] = { 13, 'L','X','N','-','4','S','2','7','L','X
 const uint8 zclSampleSw_DateCode[] = { 8, '2','0','2','6','0','7','3','1' };
 
 // SwBuildId: 型号+版本号 (总长度含前缀16字节, 避免ZCL Read Attrs Rsp超MTU)
-// v0.1.0: 初始版本
-const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','0','.','1','.','0' };
+// v0.1.1: 修复LED1/3/4不亮 + OnOff属性权限统一
+const uint8 zclSampleSw_SwBuildId[] = { 16, 'H','A','-','S','P','A','4','C','1','-','0','.','1','.','1' };
 
 const uint8 zclSampleSw_PowerSource = POWER_SOURCE_MAINS_1_PHASE;
 
@@ -183,7 +183,7 @@ CONST uint8 zclSampleSw_NumAttributes = ( sizeof(zclSampleSw_Attrs) / sizeof(zcl
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep1[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN,
-    ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[0] } },
+    ACCESS_CONTROL_READ, (void *)&zclSampleSw_RelayState[0] } },
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8,
     ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[0] } },
 };
@@ -191,7 +191,7 @@ CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep1[] =
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep2[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN,
-    ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[1] } },
+    ACCESS_CONTROL_READ, (void *)&zclSampleSw_RelayState[1] } },
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8,
     ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[1] } },
 };
@@ -207,7 +207,7 @@ CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep3[] =
 CONST zclAttrRec_t zclSampleSw_RelayAttrs_ep4[] =
 {
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_ON_OFF, ZCL_DATATYPE_BOOLEAN,
-    ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_RelayState[3] } },
+    ACCESS_CONTROL_READ, (void *)&zclSampleSw_RelayState[3] } },
   { ZCL_CLUSTER_ID_GEN_ON_OFF, { ATTRID_STARTUP_ON_OFF, ZCL_DATATYPE_ENUM8,
     ACCESS_CONTROL_READ | ACCESS_CONTROL_WRITE, (void *)&zclSampleSw_StartUpOnOff[3] } },
 };

@@ -327,14 +327,20 @@ UINT16 zclSampleSw_event_loop( byte task_id, UINT16 events )
 /*********************************************************************
  * @fn      zclSampleSw_InitGpio
  * @brief   初始化继电器/LED/触摸引脚的GPIO方向与初始电平
+ *          LED(P0_0~P0_3): 输出, 必须显式配置(HalLedInit只配P1口HAL LED)
  *          继电器(P1_0/P1_2/P1_6/P2_0): 输出, 默认高电平(继电器断开)
- *          LED(P0_0~P0_3): 已由HalLedInit配置为输出, 这里同步为继电器状态
  *          触摸(P0_4~P0_7): 输入, 上拉(CC2530 P0口默认上拉)
  *          S1(P1_3): 输入, 上拉(低电平有效)
  * @return  none
  */
 void zclSampleSw_InitGpio(void)
 {
+  // LED引脚设为GPIO功能并配置为输出 (P0_0~P0_3)
+  // 必须显式配置, HalLedInit只配置P1口的HAL LED引脚, 不覆盖P0_0~P0_3
+  // P0_2/P0_3默认可能是UART0功能, P0_0/P0_1默认可能是模拟输入
+  P0SEL &= ~(BV(0) | BV(1) | BV(2) | BV(3));  // P0_0~P0_3 选为GPIO
+  P0DIR |= (BV(0) | BV(1) | BV(2) | BV(3));   // 设为输出
+
   // 继电器引脚设为GPIO功能并配置为输出
   P1SEL &= ~RELAY_P1_BV;        // P1_0/P1_2/P1_6 选为GPIO
   P2SEL &= ~RELAY_P2_BV;        // P2_0 选为GPIO

@@ -1,5 +1,16 @@
 # 更新日志
 
+## v0.1.1 (2026-07-31)
+
+### 修复
+- LED1/3/4不亮: zclSampleSw_InitGpio显式配置P0_0~P0_3为GPIO输出 (原依赖HalLedInit只配P1口)
+- OnOff属性权限统一: ep1/ep2移除WRITE权限, 与ep3/ep4一致 (避免Z2M写属性绕过回调导致状态不同步)
+
+### 验证要点
+- 4个LED全部正常反馈继电器状态 (OFF→LED亮, ON→LED灭)
+- Z2M控制4路继电器, LED全部正确反馈
+- 触摸4路, Z2M日志收到Report Attributes, 状态同步更新
+
 ## v0.1.0 (2026-07-31)
 
 ### 新增
