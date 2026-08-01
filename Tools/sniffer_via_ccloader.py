@@ -45,10 +45,12 @@ def parse_zboss_packets(buf):
         if pkt_type != 0:  # 非 OK，跳过
             pos += pkt_len
             continue
-        # 提取 IEEE 802.15.4 帧（移除最后 1 字节 CRC 状态）
+        # 提取 IEEE 802.15.4 帧（移除最后 2 字节：LQI + CRC 状态）
+        # ZBOSS sniffer payload: [802.15.4帧(无FCS)][LQI(1B)][CRC状态(1B)]
+        # 之前只删 1 字节会保留 LQI，导致 wireshark 帧解析错位无法解密
         payload = buf[pos + 4 : pos + pkt_len]
-        if len(payload) > 1:
-            ieee_frame = payload[:-1]
+        if len(payload) > 2:
+            ieee_frame = payload[:-2]
             packets.append(ieee_frame)
         pos += pkt_len
     return packets, buf[pos:]
